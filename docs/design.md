@@ -114,7 +114,7 @@ before anything is written. Nothing leaves the machine.
 | | Delivers | Proves |
 |---|---|---|
 | M0 | This repository: AI setup, CI on GitHub's runners, the design, the SDK's first package | `/check` and CI green |
-| M1 | `broker.Run`: one command with a timeout, a whole-tree kill, an output cap and an audit line, on all three platforms | A grandchild process dies with its parent on Windows, Linux and macOS (CI: Linux and Windows; macOS cross-compiled until a Mac runner exists) |
+| M1 | `broker.Run`: one command with a timeout, a whole-tree kill, an output cap and an audit line, on all three platforms | A grandchild process dies with its parent on Windows, Linux and macOS, in CI on all three |
 | M2 | Policy: rules, decisions, harness's guard rule set with its tests | Every harness guard test passes against adanext-exec |
 | M3 | `adanext-exec run` and `check`, the JSON protocol v1 | A Claude Code hook can call it |
 | M4 | The daemon and heavy-command slots | Two clients' builds queue instead of running together |

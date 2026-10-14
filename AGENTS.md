@@ -24,7 +24,7 @@ A package that does not exist yet arrives with its milestone in `PLAN.md`.
 ## Build and test
 
 Go as pinned in `go.mod`, nothing else. What CI (`.github/workflows/ci.yml`, GitHub's hosted
-Ubuntu and Windows runners: this repository is public) runs; run the same before a PR (`/check`):
+Ubuntu, Windows and macOS runners: this repository is public) runs; run the same before a PR (`/check`):
 
 ```bash
 go vet ./...
@@ -37,9 +37,9 @@ sh .claude/hooks/hidden-chars.test.sh && sh .claude/hooks/hidden-chars.sh
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and
-leave `-race` to CI. Cross-compile the macOS code until a Mac runner exists:
-`GOOS=darwin go vet ./...`. Never attach self-hosted runners: a public repository's pull
-requests must never reach the owner's machines.
+leave `-race` to CI. Without a Mac at hand, `GOOS=darwin go vet ./...` catches build errors
+before CI's macOS job runs the tests. Never attach self-hosted runners: a public repository's
+pull requests must never reach the owner's machines.
 
 ## Rules of this repository
 
