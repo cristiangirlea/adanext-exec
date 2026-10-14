@@ -75,12 +75,15 @@ Across commands (daemon):
 | Concern | Windows | Linux | macOS |
 |---|---|---|---|
 | Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`) | New process group (`Setpgid`); kill the group; cgroup v2 when delegated | New process group; kill the group |
-| Memory ceiling | Job Object `JobMemoryLimit` | cgroup v2 `memory.max` when a delegated cgroup is available, else `RLIMIT_AS` | `RLIMIT_AS` only (best effort; stated in output) |
+| Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`, with its completion-port notice so the command is stopped, not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
+| Memory ceiling (portable) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
 | Process identity (who holds a slot) | creation time (`GetProcessTimes`) | start ticks (`/proc/<pid>/stat`) | start time from `kern.proc.pid` (to verify with the standard library) |
 
 Everything goes through `syscall` / `syscall.NewLazyDLL`, never `golang.org/x/sys`. Where a
-platform cannot enforce a limit, the result says so instead of pretending.
+platform cannot enforce a limit, the result says so instead of pretending. `RLIMIT_AS` is not
+used as a ceiling: it limits each process's virtual address space, not the tree's memory, the
+Go toolchain's reservations fail under a modest one, and macOS does not enforce it.
 
 ## Audit
 
@@ -121,7 +124,7 @@ before anything is written. Nothing leaves the machine.
 | M2 | Policy: rules, decisions, harness's guard rule set with its tests | Every harness guard test passes against adanext-exec |
 | M3 | `adanext-exec run` and `check`, the JSON protocol v1 | A Claude Code hook can call it |
 | M4 | The daemon and heavy-command slots | Two clients' builds queue instead of running together |
-| M5 | Memory ceilings | A command over its ceiling is stopped and reported, per platform |
+| M5 | Memory ceilings | A command over its ceiling is stopped and reported, or reported as not enforced where the platform cannot, per platform |
 | M6 | Claude Code integration (hook, docs) | The owner's sessions run through it |
 | M7 | hrn integration | harness's tools use the SDK |
 | M8 | AdaNext OS integration | `adad` runs tasks through it |
