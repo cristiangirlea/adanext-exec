@@ -101,8 +101,11 @@ before anything is written. Nothing leaves the machine.
 
 1. **Claude Code**: a PreToolUse hook for Bash and PowerShell calls `adanext-exec check`, and
    rewrites the command to `adanext-exec run -- <command>` through the hook's `updatedInput`,
-   so limits and audit apply to Claude Code's own commands. (To verify against the current
-   Claude Code hook contract before building.)
+   so limits and audit apply to Claude Code's own commands. When `check` answers ask, Claude
+   Code asks the person; the rewritten command then carries that decision and its rule, and
+   `run` honours it instead of judging again (where no person can be asked, ask would mean
+   refuse). This rests on the same-user trust below: `run` cannot tell who wrote the decision,
+   and does not need to. The protocol of M3 carries the decision field.
 2. **hrn**: `internal/tools` runs shell commands through the SDK when it is present, and its
    guard rules move here, with harness keeping a thin adapter.
 3. **AdaNext OS**: `adad` runs every task command through the SDK; the policy and limits become
