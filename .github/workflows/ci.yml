@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # GitHub's standard hosted runners are free for a public repository; the job skips if the
+    # repository is ever private, so it can never spend private minutes. Never a self-hosted
+    # runner: public contributions must not run on the owner's machines.
+    if: ${{ github.event.repository.private == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    # Git Bash on both, so the steps read the same.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 ./...
+      - name: test with the race detector
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -count=1 ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: hook scripts parse
+        run: |
+          bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+          bash -n .claude/hooks/push-guard.sh && bash -n .claude/hooks/push-guard.test.sh
+          bash -n .claude/hooks/hidden-chars.sh && bash -n .claude/hooks/hidden-chars.test.sh
+      - name: the gofmt hook behaves
+        run: sh .claude/hooks/go-rules.test.sh
+      - name: the push guard behaves
+        run: sh .claude/hooks/push-guard.test.sh
+      - name: no hidden characters in tracked files
+        run: |
+          sh .claude/hooks/hidden-chars.test.sh
+          sh .claude/hooks/hidden-chars.sh
