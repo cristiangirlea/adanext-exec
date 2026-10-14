@@ -615,7 +615,9 @@ if json_string command; then
     *) exit 0 ;;
   esac
 fi
-soh=$(printf '\001')
+# The word separator is \037, not \001: bash 3.2, macOS's sh, uses \001 internally and drops it
+# from IFS and expansions, so words never split and a git push went unseen.
+soh=$(printf '\037')
 # A failure of the hook itself fails closed for the commands it guards, open for the rest.
 (main)
 status=$?
