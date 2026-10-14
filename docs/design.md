@@ -25,8 +25,10 @@ macOS, with one policy, one set of limits and one audit log.
 1. **A Go SDK** (`github.com/cristiangirlea/adanext-exec/broker`): Go programs (hrn, `adad`)
    import it and run commands through it directly. Standard library only.
 2. **A binary, `adanext-exec`**, that is three things:
-   - `adanext-exec run [--profile P] -- <command…>`: run one command under the broker and exit
-     with its code. Usable from any shell, hook or language.
+   - `adanext-exec run [--profile P] [--approved RULE] -- <command…>`: run one command under the
+     broker and exit with its code. Usable from any shell, hook or language. `--approved RULE`
+     says a person approved an ask; it counts only when the policy's own answer for the command
+     is ask under that same rule, so it can never turn a refusal into a run.
    - `adanext-exec check --json`: a decision only (allow, ask, refuse, with the rule), for
      hooks that must answer before a tool runs.
    - `adanext-exec serve`: the local daemon that holds the shared limits (the queue of heavy
@@ -76,7 +78,7 @@ Across commands (daemon):
 |---|---|---|---|
 | Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`) | New process group (`Setpgid`); kill the group; cgroup v2 when delegated | New process group; kill the group |
 | Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`, with its completion-port notice so the command is stopped, not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
-| Memory ceiling (portable) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
+| Memory ceiling (portable, best effort: a short spike between polls can pass) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
 | Process identity (who holds a slot) | creation time (`GetProcessTimes`) | start ticks (`/proc/<pid>/stat`) | start time from `kern.proc.pid` (to verify with the standard library) |
 
@@ -104,11 +106,12 @@ before anything is written. Nothing leaves the machine.
 
 1. **Claude Code**: a PreToolUse hook for Bash and PowerShell calls `adanext-exec check`, and
    rewrites the command to `adanext-exec run -- <command>` through the hook's `updatedInput`,
-   so limits and audit apply to Claude Code's own commands. When `check` answers ask, Claude
-   Code asks the person; the rewritten command then carries that decision and its rule, and
-   `run` honours it instead of judging again (where no person can be asked, ask would mean
-   refuse). This rests on the same-user trust below: `run` cannot tell who wrote the decision,
-   and does not need to. The protocol of M3 carries the decision field.
+   so limits and audit apply to Claude Code's own commands. When `check` answers ask, the hook
+   answers ask too and writes the rewrite as `adanext-exec run --approved RULE -- <command>`;
+   Claude Code runs it only once the person approves. `run` judges the command again; an ask under RULE then runs instead of being
+   refused (where no person can be asked, ask means refuse). This rests on the same-user trust
+   below: `run` cannot tell who wrote `--approved`, and does not need to, since the flag only
+   confirms an ask the policy itself gives.
 2. **hrn**: `internal/tools` runs shell commands through the SDK when it is present, and its
    guard rules move here, with harness keeping a thin adapter.
 3. **AdaNext OS**: `adad` runs every task command through the SDK; the policy and limits become
