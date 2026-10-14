@@ -32,6 +32,7 @@ go build ./...
 go test -count=1 ./...
 go test -race -count=1 ./...                                  # Linux only in CI
 test -z "$(gofmt -l .)"
+for f in .claude/hooks/*.sh; do bash -n "$f"; done                # the hooks parse
 sh .claude/hooks/go-rules.test.sh && sh .claude/hooks/push-guard.test.sh
 sh .claude/hooks/hidden-chars.test.sh && sh .claude/hooks/hidden-chars.sh
 ```
