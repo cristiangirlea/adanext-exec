@@ -323,6 +323,8 @@ raw 2 '{"cwd":"/tmp/a\tb","tool_input":{"command":"git push"}}'
 grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
 raw 2 '{"cwd":"/tmp/a\fb","tool_input":{"command":"git push"}}'
 grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+# Bash removes a backslash and the newline after it, joining the two halves of a word.
+refused 'git pu\\\nsh origin main'
 # A raw separator byte would turn into a backslash when the hook decodes escapes.
 us=$(printf '\037')
 raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"

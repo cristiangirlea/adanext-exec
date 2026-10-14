@@ -70,12 +70,12 @@ json_string() {
   done
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
-# cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
-# PowerShell line continuations); other newlines stay. CRLF and a lone CR are newlines (PowerShell
-# ends a line at a CR). Control characters: spaces.
+# cannot start another escape. A backslash before a newline joins the halves of a word, as sh does;
+# a backtick before one joins the lines with a space (PowerShell); other newlines stay. CRLF and a
+# lone CR are newlines (PowerShell ends a line at a CR). Control characters: spaces.
 unescape() {
   sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r\\n/\\n/g' -e 's/\\r/\\n/g' \
-    -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
+    -e 's/'"$soh"'\\n//g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
     -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
