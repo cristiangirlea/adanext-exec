@@ -1,11 +1,12 @@
-// Package broker is the Go SDK of adanext-exec: the gate every agent shell command goes
-// through. A caller hands it a command and the broker decides (allow, ask or refuse) under a
-// policy, runs it within limits (how many heavy commands at once, a timeout, a memory ceiling),
-// kills the whole process tree when it must stop, and writes one audit record per command.
+// Package broker is the Go SDK of adanext-exec, the gate agent shell commands are meant to go
+// through. Today it holds only ProtocolVersion. The rest arrives milestone by milestone, as
+// docs/design.md and PLAN.md describe: a caller will hand the broker a command, and it will
+// decide (allow, ask or refuse) under a policy, run the command within limits (a timeout, a
+// memory ceiling, how many heavy commands at once), kill the whole process tree when it must
+// stop, and write one audit record per command.
 //
-// The package grows slice by slice as docs/design.md and PLAN.md describe. Programs in other
-// languages use the adanext-exec binary and its JSON protocol instead; ProtocolVersion names
-// the protocol both speak.
+// Programs in other languages will use the adanext-exec binary and its JSON protocol instead;
+// ProtocolVersion names the protocol both speak.
 package broker
 
 // ProtocolVersion is the version of the JSON protocol between the adanext-exec daemon and its
