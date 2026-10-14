@@ -307,9 +307,22 @@ allowed 'git status\r\ngit log' . PowerShell
 # The cwd is decoded too: an escape the hook cannot decode faithfully there is refused, an escaped
 # backslash (a Windows path) is not, and neither is a literal backslash and u in the command.
 raw 2 '{"cwd":"/tmp/a\u0001b","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
 raw 2 '{"cwd":"/tmp/a\nb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
 raw 0 '{"cwd":"C:\\new\\x","tool_input":{"command":"git status"}}'
 allowed 'echo \\u263a; git status'
+# Bash keeps a CR inside a word, so for Bash any CR is refused; a backspace or form feed is
+# refused for both shells.
+refused 'echo\r#; git push origin main'
+refused 'git push origin \\\r\nmain'
+refused 'echo\b#; git push origin main' . PowerShell
+refused 'echo\f#; git push origin main'
+# A cwd with any escape but a quote or a slash is refused: a tab there is no space.
+raw 2 '{"cwd":"/tmp/a\tb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+raw 2 '{"cwd":"/tmp/a\fb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
 # A raw separator byte would turn into a backslash when the hook decodes escapes.
 us=$(printf '\037')
 raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"
