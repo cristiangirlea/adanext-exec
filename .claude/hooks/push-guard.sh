@@ -588,12 +588,16 @@ main() {
     exit 0
   fi
   cmd=$val
-  # A control character written as a \u escape is part of a word to the shell, but the decoding
-  # below reads it as a space; a raw separator byte would decode as a backslash. Either can hide a
-  # push, so neither is read past when the command mentions a guarded word (\n and \t are fine).
-  case $input in
-    *"$soh"* | *\\u00[01][0-9a-fA-F]* | *\\u007[fF]*)
-      mentions "$cmd" && refuse "the command holds a control character the hook cannot read faithfully" ;;
+  # The decoding below reads a \u escape other than & < > ' as a space, but the shell keeps the
+  # character inside a word, so a # after it is no comment, and escapes can spell a guarded word.
+  # Claude Code writes such escapes only for rare control characters: refuse them all. A raw
+  # separator byte, which no valid JSON holds, would decode as a backslash: refuse it too.
+  case $input in *"$soh"*) refuse "the input holds a raw control character" ;; esac
+  case $cmd in
+    *\\u*)
+      rest=$(printf '%s' "$cmd" | sed -e 's/\\u0026//g' -e 's/\\u003[cCeE]//g' -e "s/\\\\u0027//g")
+      case $rest in *\\u*) refuse "the command holds a \\u escape the hook cannot read faithfully" ;; esac
+      ;;
   esac
   use_lang sh
   json_string tool_name && [ "$val" = PowerShell ] && use_lang ps

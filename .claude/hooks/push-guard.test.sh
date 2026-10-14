@@ -291,12 +291,16 @@ raw 2 '{"tool_input":{"command":null},"note":"release"}'
 raw 0 'not json: ls -la'
 raw 0 '{"tool_input":{"command":"ls -la'
 raw 0 ''
-# A control character the hook would read as a space is part of a word to the shell, so a # after
-# it is no comment: refused when the command mentions a guarded word, let through otherwise.
+# A \u escape the hook would read as a space is part of a word to the shell, so a # after it is no
+# comment, and escapes can spell a guarded word: any escape but & < > ' is refused.
 refused 'echo\u001f#; git push origin main'
 refused 'echo\u0001#; git push origin main'
 refused 'echo\u007f#; git push origin main'
-allowed 'echo\u001f#; ls'
+refused 'echo\u263a#; git push origin main'
+refused 'echo\ud83d\ude00#; git push origin main'
+refused 'git \u0070ush origin main'
+refused 'echo\u001f#; ls'
+allowed 'ls \u0026\u0026 echo \u0027a\u0027 \u003e out \u003C in'
 # A raw separator byte would turn into a backslash when the hook decodes escapes.
 us=$(printf '\037')
 raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"
