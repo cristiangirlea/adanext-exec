@@ -1,0 +1,7 @@
+/adanext-exec
+/adanext-exec.exe
+/dist/
+
+# Personal AI notes and settings
+CLAUDE.local.md
+.claude/settings.local.json
