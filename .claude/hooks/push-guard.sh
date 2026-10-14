@@ -588,6 +588,13 @@ main() {
     exit 0
   fi
   cmd=$val
+  # A control character written as a \u escape is part of a word to the shell, but the decoding
+  # below reads it as a space; a raw separator byte would decode as a backslash. Either can hide a
+  # push, so neither is read past when the command mentions a guarded word (\n and \t are fine).
+  case $input in
+    *"$soh"* | *\\u00[01][0-9a-fA-F]* | *\\u007[fF]*)
+      mentions "$cmd" && refuse "the command holds a control character the hook cannot read faithfully" ;;
+  esac
   use_lang sh
   json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
   cwd=

@@ -291,6 +291,15 @@ raw 2 '{"tool_input":{"command":null},"note":"release"}'
 raw 0 'not json: ls -la'
 raw 0 '{"tool_input":{"command":"ls -la'
 raw 0 ''
+# A control character the hook would read as a space is part of a word to the shell, so a # after
+# it is no comment: refused when the command mentions a guarded word, let through otherwise.
+refused 'echo\u001f#; git push origin main'
+refused 'echo\u0001#; git push origin main'
+refused 'echo\u007f#; git push origin main'
+allowed 'echo\u001f#; ls'
+# A raw separator byte would turn into a backslash when the hook decodes escapes.
+us=$(printf '\037')
+raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"
 # A failure of the hook itself fails closed for a command that mentions a push: here git kills it.
 mkdir "$tmp/shim" && printf '#!/bin/sh\nkill -TERM "$PPID"\n' > "$tmp/shim/git" &&
   chmod +x "$tmp/shim/git" || fail "setting up the git shim failed"
