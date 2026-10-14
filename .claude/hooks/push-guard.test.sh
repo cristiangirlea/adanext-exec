@@ -301,6 +301,15 @@ refused 'echo\ud83d\ude00#; git push origin main'
 refused 'git \u0070ush origin main'
 refused 'echo\u001f#; ls'
 allowed 'ls \u0026\u0026 echo \u0027a\u0027 \u003e out \u003C in'
+# A lone carriage return ends a line in PowerShell, so a # after it starts a comment there.
+refused 'git push origin main\r# comment' . PowerShell
+allowed 'git status\r\ngit log' . PowerShell
+# The cwd is decoded too: an escape the hook cannot decode faithfully there is refused, an escaped
+# backslash (a Windows path) is not, and neither is a literal backslash and u in the command.
+raw 2 '{"cwd":"/tmp/a\u0001b","tool_input":{"command":"git push"}}'
+raw 2 '{"cwd":"/tmp/a\nb","tool_input":{"command":"git push"}}'
+raw 0 '{"cwd":"C:\\new\\x","tool_input":{"command":"git status"}}'
+allowed 'echo \\u263a; git status'
 # A raw separator byte would turn into a backslash when the hook decodes escapes.
 us=$(printf '\037')
 raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"

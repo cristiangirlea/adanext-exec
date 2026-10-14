@@ -71,9 +71,10 @@ json_string() {
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
 # cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
-# PowerShell line continuations); other newlines stay. Control characters: spaces.
+# PowerShell line continuations); other newlines stay. CRLF and a lone CR are newlines (PowerShell
+# ends a line at a CR). Control characters: spaces.
 unescape() {
-  sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r//g' \
+  sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r\\n/\\n/g' -e 's/\\r/\\n/g' \
     -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
     -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
@@ -590,19 +591,23 @@ main() {
   cmd=$val
   # The decoding below reads a \u escape other than & < > ' as a space, but the shell keeps the
   # character inside a word, so a # after it is no comment, and escapes can spell a guarded word.
-  # Claude Code writes such escapes only for rare control characters: refuse them all. A raw
-  # separator byte, which no valid JSON holds, would decode as a backslash: refuse it too.
+  # Claude Code writes such escapes only for rare control characters: refuse them all, in the
+  # command and in the cwd, where a newline is refused too (the two are decoded as one text).
+  # Escaped backslashes are set aside first. A raw separator byte, which no valid JSON holds,
+  # would decode as a backslash: refuse it too.
   case $input in *"$soh"*) refuse "the input holds a raw control character" ;; esac
-  case $cmd in
-    *\\u*)
-      rest=$(printf '%s' "$cmd" | sed -e 's/\\u0026//g' -e 's/\\u003[cCeE]//g' -e "s/\\\\u0027//g")
+  cwd=
+  json_string cwd && cwd=$val
+  case $cmd$cwd in
+    *\\u* | *\\[nr]*)
+      rest=$(printf '%s' "$cmd" | sed -e 's/\\\\//g' -e 's/\\u0026//g' -e 's/\\u0027//g' -e 's/\\u003[cCeE]//g')
       case $rest in *\\u*) refuse "the command holds a \\u escape the hook cannot read faithfully" ;; esac
+      rest=$(printf '%s' "$cwd" | sed -e 's/\\\\//g')
+      case $rest in *\\[unr]*) refuse "the cwd holds an escape the hook cannot read faithfully" ;; esac
       ;;
   esac
   use_lang sh
   json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
-  cwd=
-  json_string cwd && cwd=$val
   case $cwd$cmd in
     *\\*)
       # Both through one sed; the x keeps a trailing empty line.
