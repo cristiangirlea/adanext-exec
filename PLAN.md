@@ -5,8 +5,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 ## Milestones
 
-- [ ] **M0: the repository.** AI setup, CI on GitHub's hosted runners, the design, the SDK's first
-  package (`broker.ProtocolVersion`).
+- [x] **M0: the repository.** AI setup, CI on GitHub's hosted runners, the design, the SDK's first
+  package (`broker.ProtocolVersion`). Done: PR #3, 2026-10-14. Its review's design concerns are
+  issues #4 to #22, each naming its milestone.
 - [ ] **M1: one command, contained.** `broker.Run` with a timeout, a whole-tree kill, an output
   cap and an audit line, on Windows (Job Objects), Linux and macOS (process groups).
 - [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
