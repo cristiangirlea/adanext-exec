@@ -207,3 +207,7 @@ func TestIsWSLLauncherSeesAStoreAlias(t *testing.T) {
 		t.Fatal("a link to a WindowsApps alias was not taken for a launcher")
 	}
 }
+
+func callerDeath() (leaderDies, childDies bool, why string) {
+	return true, true, "Windows: the job closes with its caller and kills the whole tree"
+}

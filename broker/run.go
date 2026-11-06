@@ -39,8 +39,12 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // Run runs one command with its whole process tree contained: a Job Object on Windows, a new
 // process group on Linux and macOS. When the command times out or ctx ends, Run kills the whole
 // tree. When the command's own process exits, Run also kills whatever it left running, so
-// nothing the command started outlives Run. A process that leaves the group on Unix (setsid,
-// setpgid) is outside this. On Unix, Run must be the only one reaping its command: a caller
+// nothing the command started outlives Run. On Unix a process that leaves the group (setsid,
+// setpgid) is still found through a marker in its environment or its parent link; one that
+// clears its environment and is orphaned, or that the user cannot read, is not (see
+// docs/design.md). When the caller is killed first, Windows kills the whole tree, Linux the
+// command's own process only, and macOS nothing. On Unix, Run must be the only one reaping its
+// command: a caller
 // that ignores SIGCHLD or waits for any child makes Run report an error and leave the group
 // unsignalled, since its id may then belong to another process.
 //

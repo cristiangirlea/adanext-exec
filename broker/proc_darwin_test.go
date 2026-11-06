@@ -66,3 +66,7 @@ func TestProcessStateReadsTheProcessTable(t *testing.T) {
 		t.Fatalf("a reaped child: alive %v, err %v", alive, err)
 	}
 }
+
+func callerDeath() (leaderDies, childDies bool, why string) {
+	return false, false, "macOS has no parent-death signal: the tree outlives a caller killed before it can kill it"
+}

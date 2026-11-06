@@ -25,3 +25,7 @@ func processState(pid int) (born string, alive bool, err error) {
 	}
 	return fields[19], fields[0] != "Z", nil
 }
+
+func callerDeath() (leaderDies, childDies bool, why string) {
+	return true, false, "Linux: the command's own process dies with its caller (parent-death signal); its descendants stay"
+}
