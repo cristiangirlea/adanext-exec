@@ -65,6 +65,9 @@ type Command struct {
 	// not Timeout. Its Command has its own copies of Args and Env, so changing them changes
 	// nothing that runs; Stdin, Stdout and Stderr are the caller's own and are not to be used.
 	Ask func(ctx context.Context, c Command, v Verdict) (bool, error)
+	// Slots, when set, makes Run wait for one of the daemon's heavy-command slots before the
+	// command starts, and hold it until the command has ended. Nil shares no limits.
+	Slots *Slots
 }
 
 // Shell names a shell that reads a Command's Script.

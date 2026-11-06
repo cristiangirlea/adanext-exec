@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/adanext-exec/internal/daemon"
 	"github.com/cristiangirlea/adanext-exec/internal/tree"
 )
 
@@ -31,6 +32,8 @@ type Result struct {
 	// OutputCut counts the bytes of output left out under the Command's OutputCap, over both
 	// streams; zero means all of it was passed on.
 	OutputCut int64
+	// Waited is how long the command waited for a heavy-command slot (Command.Slots).
+	Waited time.Duration
 }
 
 // outputGrace is how long Run waits, once the tree is dead, for an output pipe that stays
@@ -69,6 +72,13 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // or what a person approves through Command.Ask when the policy answers ask: a refusal, a
 // declined ask, or an ask with no Command.Ask returns a *RefusedError (ErrRefused) with a zero
 // Result.
+//
+// With Command.Slots set, an allowed command then waits for a heavy-command slot from the
+// daemon, within ctx (Timeout starts with the command, not the wait), and holds it until the
+// command and its tree have ended. No daemon is ErrNoDaemon, and no slot in time is ErrNoSlot;
+// either way the command does not run. A daemon that lets go of the slot while the command
+// holds it (it ended, or closed the connection) gets ErrSlotLost: the command is killed with
+// its tree, or never starts.
 //
 // The console's Ctrl+C reaches the command as it reaches the caller. A caller that wants to
 // report after one handles os.Interrupt and cancels ctx: Run then kills the tree and returns.
@@ -127,8 +137,49 @@ func Run(ctx context.Context, c Command) (Result, error) {
 			}
 		}
 	}
+	var waited time.Duration
+	runCtx := ctx
+	if err == nil && c.Slots != nil {
+		var lease *daemon.Lease
+		if lease, err = c.Slots.acquire(ctx, c); err == nil {
+			// The slot is held until the command and everything it started have ended.
+			defer lease.Release()
+			waited = lease.Waited
+			c.Env = withHints(c.Env, lease.Env)
+			slotGranted(lease.Lost())
+			// A daemon that lets go of the slot, by ending or closing the connection, takes
+			// the command with it: its tree is killed, or it never starts.
+			var cancel context.CancelCauseFunc
+			runCtx, cancel = context.WithCancelCause(ctx)
+			defer cancel(nil)
+			// A slot already gone never starts the command; one lost later kills its tree.
+			select {
+			case <-lease.Lost():
+				cancel(ErrSlotLost)
+			default:
+			}
+			go func() {
+				select {
+				case <-lease.Lost():
+					cancel(ErrSlotLost)
+				case <-runCtx.Done():
+				}
+			}()
+		}
+	}
 	if err == nil {
-		res, ran, err = run(ctx, c)
+		res, ran, err = run(runCtx, c)
+		if ran {
+			// A command that did not run keeps its zero Result, as Run promises.
+			res.Waited = waited
+		}
+		if errors.Is(context.Cause(runCtx), ErrSlotLost) && ctx.Err() == nil {
+			if ran {
+				err = errors.Join(err, ErrSlotLost)
+			} else {
+				err = ErrSlotLost
+			}
+		}
 	}
 	if log != nil {
 		if aerr := log.write(c.record(snap, begin, verdict, approved, res, ran, err)); aerr != nil {
@@ -137,6 +188,10 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	}
 	return res, err
 }
+
+// slotGranted runs between a slot's grant and the command's start, given the channel that
+// says the slot is gone; tests replace it.
+var slotGranted = func(lost <-chan struct{}) {}
 
 // now is the clock Run reads its start from, and getwd how it reads the caller's directory;
 // tests replace them.

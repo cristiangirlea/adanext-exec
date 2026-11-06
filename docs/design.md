@@ -189,7 +189,8 @@ Across commands (daemon):
   commands run at once on the machine (default: CPU count / 4, at least 1); the rest wait in a
   fair queue, oldest first, with the wait shown to the caller. Light commands never wait.
   A slot is a lease on the client's connection to the daemon (M4a, #9): closing the connection,
-  for any reason, releases it, so the daemon never has to tell processes apart.
+  for any reason, releases it, so the daemon never has to tell processes apart. Until the
+  classification lands (M4c), every command that asks for a slot is counted heavy.
   [protocol.md](protocol.md) has the messages.
 
 ## How it controls processes, per platform
@@ -272,7 +273,8 @@ M1d delivers the line through `broker.Command.Audit`, with the fields there are 
 queue wait and peak memory arrive with M4 and M5): `time` (the start, UTC), `caller`, `dir`,
 `args` or `shell` and `script`, `outcome` (exited, signalled, timed out, cancelled, refused,
 not run), `decision` and `rule` (M2b: the policy's verdict, when there is a policy, and the rule
-that gave it), `approved` (M2c: a person's answer, when one was asked), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+that gave it), `approved` (M2c: a person's answer, when one was asked), `queue_wait_ms` (M4b:
+the wait for a heavy-command slot, when there was one), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
 Run did not run gets its line too, with the reason; a command whose line cannot be opened is
 not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
 (`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,
@@ -307,9 +309,37 @@ What the audit cannot promise (#13, #14):
 ## Transport and trust
 
 - The daemon listens on a Unix domain socket (Go supports AF_UNIX on Windows 10 1803 and
-  later): `<state dir>/adanext-exec.sock`, created owner-only. No TCP listener, no network.
+  later): `<state dir>/adanext-exec/daemon/daemon.sock` (`broker.DefaultSocket`), in a directory of its
+  own beside the audit's.
+  No TCP listener, no network.
+- The socket's directory must be the user's own, and the daemon makes it owner-only: 0700 on
+  Linux and macOS (and the socket 0600), and on Windows a protected access list for the user,
+  SYSTEM and Administrators only. Go sets no access list on a Windows socket file and Windows
+  has no owner-only mode for it, so there the socket is exactly as private as that directory
+  (#17). This holds for a `--socket` given elsewhere too.
+- A client sends its command only to a socket the user owns, so a socket another account
+  planted never learns what runs.
+- The daemon does not ask who connects. Linux could tell it (`SO_PEERCRED`), Windows cannot
+  (AF_UNIX there has no peer credentials), and the directory already keeps other users out, so
+  a client is whoever can open the socket: the same user. The protocol carries no secrets.
 - It runs as the user, never elevated, and refuses to start elevated.
-- A client is whoever can open the socket, i.e. the same user. The protocol carries no secrets.
+
+**Its lifecycle (M4b, #16).** Nothing starts the daemon on its own: the user runs
+`adanext-exec serve`, from a terminal or a login item, and it runs until stopped. It takes an
+exclusive lock on `daemon.sock.lock` beside the socket for its whole life (`flock` on Linux and
+macOS, `LockFileEx` on Windows; the lock goes with the process, however it ends), so a second
+daemon refuses to start. Only under that lock does it remove a socket left by a daemon that
+ended, and only one that is a socket, the user's, and refuses a connection; anything else at the
+name (a file, another user's socket, one that fails some other way) is left alone and refused. A client and a daemon of different
+protocol versions do not talk: the daemon answers an `error`, and the client's command does not
+run. A client that asks for a slot (`Command.Slots`, `run --slots`) and finds no daemon does
+not run its command (`ErrNoDaemon`, exit 123): it fails closed instead of running without the
+shared limit it asked for. A client that does not ask runs with no shared limits, as before.
+A client watches its slot while its command runs: if the daemon ends or closes the connection,
+the command is killed with its tree, or never starts (`ErrSlotLost`, exit 123), so a restarted
+daemon never hands out a slot that a command from before is still using. The daemon bounds
+every write to a client, and ends every connection when it stops, so a client that stops
+reading or holds a slot cannot stall the queue or the daemon's own exit.
 
 The policy file, the socket and the audit all belong to the user the agents run as, so an
 agent that means to can change the policy, talk to the daemon, or edit the audit (#21). On

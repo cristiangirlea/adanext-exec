@@ -42,8 +42,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   M4c are.
   - [x] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
     in `docs/protocol.md` (#47). Done: PR #48, 2026-11-06.
-  - [ ] **M4b: the daemon and leases.** `serve`, its lifecycle, slots held as leases on the client
-    connection (#9, #16), and what the Windows socket does not protect (#17).
+  - [x] **M4b: the daemon and leases.** `serve`, its lifecycle, slots held as leases on the client
+    connection (#9, #16), and what the Windows socket does not protect (#17). Done: PR #49,
+    2026-11-06.
   - [ ] **M4c: classification.** Which commands are heavy, configurable, and their fair share
     (#15).
 - [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Windows
@@ -56,6 +57,15 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M4b (PR #49, #9, #16, #17). Nothing starts the daemon on its own; one per socket,
+  by a lock held for its life. A client that asks for a slot and finds no daemon does not run
+  its command, and one that does not ask shares no limits. A client watches its slot: a daemon
+  that ends kills the command's tree, and a restarted daemon waits, through a shared lock
+  every slot holder keeps until its tree is dead, before it grants anything. The socket needs
+  a directory of its own, which the daemon makes owner-only (on Windows a protected access
+  list, since the socket has none and Windows gives no peer credentials); a client talks only
+  to a socket the user owns. Classification comes with M4c; until then every command that asks
+  for a slot is heavy.
 - 2026-11-06: M4a (PR #48, #9). A slot is a lease on the client's connection: released when the
   connection closes, however the client ends, so the design's process-identity row goes. The
   messages are newline-delimited JSON, one connection per command. A reader refuses a null

@@ -140,6 +140,7 @@ type auditRecord struct {
 	Signal     string   `json:"signal,omitempty"`
 	DurationMS int64    `json:"duration_ms"`
 	OutputCut  int64    `json:"output_cut,omitempty"`
+	QueueWait  int64    `json:"queue_wait_ms,omitempty"` // the wait for a heavy-command slot
 	Error      string   `json:"error,omitempty"`
 }
 
@@ -159,6 +160,7 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 		Script:     clean(c.Script),
 		DurationMS: res.Duration.Milliseconds(),
 		OutputCut:  res.OutputCut,
+		QueueWait:  res.Waited.Milliseconds(),
 	}
 	for i, a := range c.Args {
 		if i > 0 && takesSecret(c.Args[i-1]) {
