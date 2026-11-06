@@ -189,7 +189,19 @@ Per command:
     deliver it. `Result.PeakMemory` is the job's peak committed memory, refused allocations
     included, so it can stand over the ceiling. A ceiling larger than the platform's SIZE_T is
     refused rather than cut down.
-  - Linux and macOS: not enforced until the watchdog (M5b) and the cgroup ceiling (M5c).
+  - Linux and macOS (M5b): a watch reads the resident memory of the whole tree every 100 ms
+    (`/proc/<pid>/statm` on Linux, `proc_info`'s task information on macOS): its group, the
+    processes that carry its marker (also those that left the group), and their descendants,
+    as the kill finds them. Whether a process carries the marker is read once per process, since
+    its environment does not change. A sample counts only if, read again after it, its pid still
+    names the process scanned, so a pid reused by another program is never counted. The watch
+    kills the tree once the total passes the ceiling, and ends after the tree is killed and
+    before its leader is reaped, while the group id is still the tree's. It is best effort, and
+    says so: a spike shorter than one read can pass, and the peak reported is the most a read
+    saw, which can be past the ceiling by what the tree took in one read. A tree process whose
+    memory cannot be read (another user's) stops the tree, as the ceiling can no longer be
+    watched, and the result carries the error. Where the broker cannot read even its own memory, the ceiling is reported
+    as not enforced. A hard ceiling through a delegated cgroup is M5c.
 - **Output cap** (head and tail kept, the middle counted), as harness's bounded buffer does.
   `Command.OutputCap` bounds each stream (stdout and stderr, or one stream when both go to the
   same writer): its first two thirds pass through as the command writes them, the rest is held,
@@ -236,7 +248,7 @@ Across commands (daemon):
 |---|---|---|---|
 | Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`), the command started suspended and assigned before it runs; never breakaway | New process group (`Setpgid`) and a marker in the environment; kill the group, every process carrying the marker, and their descendants; the leader dies with its caller (`Pdeathsig`); cgroup v2 when delegated | The same, without a parent-death signal |
 | Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`; the job's peak, read every 50 ms, stops the tree once past it (M5a), so the command is not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
-| Memory ceiling (portable, best effort: a short spike between polls can pass) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
+| Memory ceiling (portable, best effort: a short spike between polls can pass) | (the job's limit is enforced instead) | a watch reads the tree's resident memory every 100 ms and kills the tree past the ceiling (M5b) | the same watch, through `proc_info`; where it cannot read its own memory, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
 
 On Windows the job allows no breakaway (no `JOB_OBJECT_LIMIT_BREAKAWAY_OK` or its silent

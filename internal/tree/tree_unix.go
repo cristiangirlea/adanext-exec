@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -37,6 +38,20 @@ type Tree struct {
 	mu      sync.Mutex
 	lost    error // set when the leader was reaped by someone else
 	unknown error // set when the leader's start time could not be read
+
+	// The memory ceiling's watch (StartLimited).
+	limit     uint64
+	enforced  bool
+	exceeded  atomic.Bool
+	peakSeen  atomic.Uint64
+	memoryErr error
+	stopWatch chan struct{}
+	watchDone chan struct{}
+	stopOnce  sync.Once
+	// readRSS reads a process's resident memory, and readMark whether it carries the tree's
+	// marker; tests replace them.
+	readRSS  func(pid int) (uint64, error)
+	readMark func(pid int) (bool, error)
 }
 
 // Start starts cmd as the leader of a new process group, with the tree's marker added to its
@@ -249,7 +264,10 @@ func (t *Tree) members(procs []proc, byGroup bool, marked func(int) bool) []proc
 }
 
 // Close lets the thread that started the command go.
-func (t *Tree) Close() { t.release() }
+func (t *Tree) Close() {
+	t.stopWatching()
+	t.release()
+}
 
 // proc is one process from the table.
 type proc struct {
@@ -262,16 +280,23 @@ type proc struct {
 // hasEnv reports whether the process's environment holds the entry exactly. A process whose
 // environment cannot be read (another user's, or one that made itself undumpable) does not.
 func hasEnv(pid int, entry string) bool {
+	v, err := envHas(pid, entry)
+	return err == nil && v
+}
+
+// envHas reports whether the process's environment holds the entry exactly, or why it could
+// not be read.
+func envHas(pid int, entry string) (bool, error) {
 	env, err := readEnv(pid)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, e := range bytes.Split(env, []byte{0}) {
 		if string(e) == entry {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // envFromProcArgs takes the environment out of a KERN_PROCARGS2 buffer: argc (int32), the
