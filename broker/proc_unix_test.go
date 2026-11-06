@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -58,8 +59,11 @@ func helperPlatform(mode string) {
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	case "clean-orphaner":
-		// Leaves a grandchild that dropped the environment and the group, holding stdout,
-		// and exits: nothing links that grandchild to the tree any more.
+		// Writes ADANEXT_TEST_OUT bytes, then leaves a grandchild that dropped the environment
+		// and the group, holding stdout, and exits: nothing links that grandchild to the tree.
+		if n, err := strconv.Atoi(os.Getenv("ADANEXT_TEST_OUT")); err == nil {
+			_, _ = os.Stdout.Write([]byte(digits(n)))
+		}
 		child := helper("sleep").cmdForTest()
 		child.Env = []string{helperEnv + "=sleep"}
 		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -167,4 +171,25 @@ func TestRunNeverSignalsAGroupWhoseLeaderWasReapedElsewhere(t *testing.T) {
 	}
 	// What the leader left still carries the marker, so it is killed all the same.
 	assertGone(t, id)
+}
+
+func TestRunWritesTheCappedTailOnceWhenOutputIsHeld(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "id.json")
+	watch(t, file)
+	var out strings.Builder
+	c := helper("clean-orphaner", "ADANEXT_TEST_PID_FILE="+file, "ADANEXT_TEST_OUT=5000")
+	c.Stdout = &out
+	c.OutputCap = 900
+	res, err := Run(context.Background(), c)
+	got := out.String()
+	time.Sleep(200 * time.Millisecond)
+	if !errors.Is(err, errOutputHeld) {
+		t.Fatalf("err %v, want the held output reported", err)
+	}
+	if want := digits(5000)[:600] + "\n[... 4100 bytes cut ...]\n" + digits(5000)[4700:]; got != want || out.String() != got {
+		t.Fatalf("output %q (then %d bytes), want the head, the line and the tail once", got, out.Len())
+	}
+	if res.OutputCut != 4100 {
+		t.Fatalf("OutputCut %d, want 4100", res.OutputCut)
+	}
 }

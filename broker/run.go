@@ -259,7 +259,7 @@ type stream struct {
 }
 
 func newStream(w io.Writer, limit int) *stream {
-	head := limit * 2 / 3
+	head := limit/3*2 + limit%3*2/3 // two thirds, rounded down, without overflow
 	return &stream{w: w, limit: limit, headLeft: head, keepTail: limit - head}
 }
 
@@ -381,8 +381,10 @@ func (o *outputs) flush() {
 		if cut := s.total - s.passed - int64(len(tail)); cut > 0 {
 			line := fmt.Sprintf("\n[... %d bytes cut ...]\n", cut)
 			if s.w != nil {
-				if _, err := io.WriteString(s.w, line); err != nil && o.err == nil {
-					o.err = fmt.Errorf("write the command's output: %w", err)
+				if _, err := io.WriteString(s.w, line); err != nil {
+					if o.err == nil {
+						o.err = fmt.Errorf("write the command's output: %w", err)
+					}
 					s.w = nil
 				}
 			}
