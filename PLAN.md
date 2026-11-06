@@ -34,8 +34,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     Done: PR #41, 2026-11-06.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`). Done when M3a and M3b are.
-  - [ ] **M3a: run** (#42). `adanext-exec run` with the policy and the audit always set,
-    `--approved`, Ctrl+C, no elevation, and distinct exit codes (#12).
+  - [x] **M3a: run** (#42). `adanext-exec run` with the policy and the audit always set,
+    `--approved`, Ctrl+C, no elevation, and distinct exit codes (#12). Done: PR #45, 2026-11-06.
   - [ ] **M3b: check** (#43). `adanext-exec check --json` and the protocol document.
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
@@ -55,6 +55,16 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M3a (PR #45, #12). The binary's own exit codes sit in 120 to 130, following
+  GNU timeout (124 to 127) and shells (128+n, 130 for an interrupt), and a command's own code
+  passes through; one that exits with a code of that band by itself cannot be told from the
+  binary's, and the audit line's outcome settles it. A command that ran but whose output,
+  audit line or clean-up failed exits 120, never its own code, since a 0 there would hide the
+  failure. A policy that cannot be used is refused through `Run`, so the audit says why; the
+  Policy `LoadPolicy` returns with an error now carries that error. With no policy file the built-in rules
+  apply, since they are a policy of their own; a policy file that is named, or present at the
+  default place, but unusable refuses. The binary's code is in `internal/cli`, so its tests
+  run it in-process against real commands.
 - 2026-11-06: M3 split into `run` with its exit codes (M3a) and `check` with the protocol
   document (M3b), one issue, branch and PR each. The protocol of M3 is what a client says to
   the binary (the `check` request and answer, `run`'s exit codes); the daemon's messages come

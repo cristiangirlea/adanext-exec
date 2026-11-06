@@ -33,8 +33,18 @@ macOS, with one policy, one set of limits and one audit log.
      hooks that must answer before a tool runs.
    - `adanext-exec serve`: the local daemon that holds the shared limits (the queue of heavy
      commands) across all clients.
-3. **A JSON protocol** between clients and the daemon, versioned (`broker.ProtocolVersion`),
-   documented in `docs/protocol.md` when it lands. Other languages speak it directly.
+3. **A JSON protocol** between clients and the binary or the daemon, versioned
+   (`broker.ProtocolVersion`), documented in [protocol.md](protocol.md). Other languages speak
+   it directly.
+
+`adanext-exec run` (M3a) always sets a policy (`--policy`, `--profile`, the user's
+`policy.json`, or the built-in rules) and an audit, so the SDK's opt-in policy and audit are
+never left out by the binary. `--approved RULE` answers through `Command.Ask` and says yes only
+to an ask under RULE. The binary handles Ctrl+C and a terminate request by cancelling the
+command, whose tree is then killed, and refuses to run as root or an elevated administrator.
+Its exit codes (#12) tell a refusal, a timeout, an interruption, a signal, a program not found,
+a command that could not run, and one that ran but whose output, audit line or clean-up failed
+apart; [protocol.md](protocol.md) lists them.
 
 The daemon is optional for a single client (the SDK enforces per-command limits in-process),
 and required for limits shared across agents (the heavy-command queue).

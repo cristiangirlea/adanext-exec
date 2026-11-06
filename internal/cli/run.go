@@ -1,0 +1,145 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+
+	"github.com/cristiangirlea/adanext-exec/broker"
+)
+
+// auditDir is where the audit goes unless --audit-dir says otherwise; tests replace it.
+var auditDir = broker.DefaultAuditDir
+
+// run is "adanext-exec run": one command through broker.Run, with the policy and the audit
+// always set.
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	shell := flags.String("shell", "", "run the one argument after -- as shell text: sh, bash, powershell, pwsh or cmd")
+	policy := flags.String("policy", "", "the policy file (default: the user's adanext-exec/policy.json, else the built-in rules)")
+	profile := flags.String("profile", "", "the policy in the user's adanext-exec/profiles/<name>.json")
+	approved := flags.String("approved", "", "a person approved an ask under this rule; it counts only when the policy answers ask under it")
+	audit := flags.String("audit-dir", "", "the audit directory (default: the user's state directory)")
+	timeout := flags.Duration("timeout", 0, "kill the command's tree after this long (0: none)")
+	outputCap := flags.Int("output-cap", 0, "bound each output stream to this many bytes (0: none)")
+	agent := flags.String("agent", "", "who asked, for the audit")
+	session := flags.String("session", "", "the caller's session, for the audit")
+	runID := flags.String("run-id", "", "the caller's run, for the audit")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return ExitUsage
+	}
+	rest := flags.Args()
+	switch {
+	case *timeout < 0:
+		return usageFail(stderr, "a negative --timeout")
+	case *outputCap < 0:
+		return usageFail(stderr, "a negative --output-cap")
+	}
+	c := broker.Command{
+		Stdin: stdin, Stdout: stdout, Stderr: stderr,
+		Timeout: *timeout, OutputCap: *outputCap,
+		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
+	}
+	switch {
+	case len(rest) == 0:
+		return usageFail(stderr, "no command after --")
+	case *shell != "" && len(rest) != 1:
+		return usageFail(stderr, "--shell takes the script as the one argument after --")
+	case *shell != "":
+		c.Shell, c.Script = broker.Shell(*shell), rest[0]
+	default:
+		c.Args = rest
+	}
+	// A policy that cannot be used still goes to Run, which refuses the command with its
+	// reason and writes the audit line.
+	p, err := selectPolicy(*policy, *profile)
+	var ue usageError
+	switch {
+	case errors.As(err, &ue):
+		return usageFail(stderr, ue.Error())
+	case err != nil && p == nil:
+		fmt.Fprintf(stderr, "adanext-exec: %v\n", err)
+		p = &broker.Policy{}
+	}
+	c.Policy = p
+	if *approved != "" {
+		rule := *approved
+		c.Ask = func(_ context.Context, _ broker.Command, v broker.Verdict) (bool, error) {
+			return v.Rule == rule, nil
+		}
+	}
+	dir := *audit
+	if dir == "" {
+		if dir, err = auditDir(); err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: %v: %v\n", broker.ErrAudit, err)
+			return ExitCannotRun
+		}
+	}
+	c.Audit = &broker.Audit{Dir: dir}
+
+	res, err := broker.Run(ctx, c)
+	ran := res != (broker.Result{})
+	if err != nil {
+		fmt.Fprintf(stderr, "adanext-exec: %v\n", err)
+	}
+	if !ran {
+		var refused *broker.RefusedError
+		switch {
+		case errors.As(err, &refused), errors.Is(err, broker.ErrPolicy):
+			return ExitRefused
+		case programNotFound(err):
+			return ExitNotFound
+		case errors.Is(err, context.Canceled):
+			return ExitInterrupted
+		case errors.Is(err, context.DeadlineExceeded):
+			return ExitTimeout
+		}
+		return ExitCannotRun
+	}
+	switch {
+	case err != nil:
+		// It ran, but something after it failed: its output, its audit line, or killing what
+		// it left running. Its own code would hide that.
+		return ExitBrokerFailed
+	case res.TimedOut:
+		return ExitTimeout
+	case res.Canceled:
+		return ExitInterrupted
+	case res.Signal != "":
+		if n := signalNumber(res.Signal); n > 0 {
+			return ExitSignal + n
+		}
+		return ExitSignal
+	}
+	return res.ExitCode
+}
+
+// programNotFound tells a command that did not run because its program or shell is missing:
+// not found in PATH, or started by a path where nothing is. The start error names the path it
+// tried; another missing file behind the same error (a working directory, say) leaves that
+// path in place, so it is not the program's absence.
+func programNotFound(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	var pe *fs.PathError
+	if !errors.Is(err, fs.ErrNotExist) || !errors.As(err, &pe) || pe.Path == "" {
+		return false
+	}
+	_, statErr := os.Stat(pe.Path)
+	return errors.Is(statErr, fs.ErrNotExist)
+}
+
+func usageFail(stderr io.Writer, msg string) int {
+	fmt.Fprintf(stderr, "adanext-exec run: %s\n", msg)
+	return ExitUsage
+}
