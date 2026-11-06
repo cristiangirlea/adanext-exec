@@ -54,6 +54,27 @@ quote can only add refusals. The first rule set is harness's guard (git push, pu
 deploys, recursive removal of a root, disk formatting, downloads piped to a shell, sudo,
 reading secret files), moved here and kept in step with harness through tests.
 
+The guard (M2a, `internal/guard`) has nine rules, each reported by name, and reports every rule
+a line meets, so a policy that lifts one still sees the others:
+
+| Rule | Refuses |
+|---|---|
+| `git-push` | `git` with `push` anywhere in its segment, or setting a `pushurl` or `pushInsteadOf` |
+| `sudo` | `sudo` in any case |
+| `rm-root` | `rm -r` of a root: `/`, `/*`, `~`, `$HOME`, `%USERPROFILE%`, a drive (`C:\`, `/c/`) |
+| `pipe-to-shell` | a download (`curl`, `wget`, `irm`, `iwr`, PowerShell's web cmdlets, `WebClient.DownloadString`) piped into a shell or `iex`, or evaluated through `iex`, `Invoke-Expression` or a scriptblock |
+| `disk` | `mkfs`, `format X:`, `dd of=` a device |
+| `gh-publish` | `gh pr merge`, release and repository changes, `gh api` writes (PUT, PATCH, DELETE), endpoints that publish (releases, refs, hooks, keys, secrets, deployments and the like, GET included) and GraphQL mutations |
+| `gh-token` | the `gh auth` commands that print the stored login |
+| `secret-file` | a word or quoted path naming a secret file: `.env*`, `.dev.vars`, keys and certificates, `.netrc`, `.npmrc`, `.pypirc`, anything under `.ssh`, `.aws`, `.kube`, `.azure` or `.private`, and the agent CLIs' and tools' login files |
+| `deploy` | `wrangler deploy`, package publishing, a project's deploy script, `kubectl`, `terraform`, `tofu`, `helm` and `docker push` changes, `vercel --prod`, `fly` and `netlify deploy` |
+
+harness's `guard-env` rule stays in harness: it guards the variables of the environment hrn
+builds for its runs (login redirects, its push refusal, its marker), which the broker does not
+build. A secret file is recognised by name in any case, with Windows' trailing dots, spaces and
+stream names, but not by an 8.3 short name or through a link: the command line is all the guard
+sees.
+
 Matching is textual and says so: it stops the plausible accident, not a determined adversary.
 Real isolation (a VM, a container, a sandbox profile) is outside this project's first scope.
 

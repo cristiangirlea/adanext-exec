@@ -14,7 +14,7 @@ the decisions log; don't reopen a recorded decision.
 | Path | Holds |
 |---|---|
 | `broker/` | The public Go SDK. Its API is the project's contract: change it additively. |
-| `internal/` | Platform code (Job Objects, process groups, cgroups, rlimits), arriving with M1. |
+| `internal/` | Platform code (Job Objects, process groups; `tree`), redaction (`redact`) and the guard's rules (`guard`). |
 | `cmd/adanext-exec/` | The binary: `run`, `check`, `serve`, arriving with M3. |
 | `docs/` | `design.md`; `protocol.md` once the JSON protocol lands. |
 | `.claude/hooks/` | gofmt, push and hidden-character checks; their tests run in CI. |
