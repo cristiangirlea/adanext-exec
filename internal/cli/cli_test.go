@@ -49,6 +49,11 @@ func helperMain(mode string) {
 		os.Stdout.Write(bytes.Repeat([]byte("x"), n))
 	case "signal":
 		helperSignal()
+	case "hints":
+		// The parallelism hints a slot brings, as the command sees them.
+		for _, k := range []string{"GOFLAGS", "GOMAXPROCS", "MAKEFLAGS", "CARGO_BUILD_JOBS"} {
+			fmt.Fprintf(os.Stdout, "%s=%s;", k, os.Getenv(k))
+		}
 	case "args":
 		// Its own arguments, after the test flag, one per line, and a line on standard error.
 		for _, a := range os.Args[2:] {

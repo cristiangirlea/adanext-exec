@@ -61,3 +61,17 @@ func ownedByUser(path string) error {
 
 // refused reports whether a dial failed because nothing serves the socket.
 func refused(err error) bool { return errors.Is(err, syscall.ECONNREFUSED) }
+
+// openNonBlock: a pipe at the configuration's name does not block the open.
+const openNonBlock = syscall.O_NONBLOCK
+
+// onlyOwnerWrites refuses a file another user owns or anyone but its owner can write.
+func onlyOwnerWrites(path string, fi os.FileInfo) error {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to another user", path)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s can be written by others (mode %v)", path, fi.Mode().Perm())
+	}
+	return nil
+}

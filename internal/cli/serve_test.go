@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +33,16 @@ func holdRun(t *testing.T, args ...string) func() int {
 		wait()
 	})
 	return wait
+}
+
+// helperHeavy is a daemon configuration that counts the tests' helper, and only it, heavy.
+func helperHeavy(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	if err := os.WriteFile(path, []byte(`{"version": 1, "heavy": ["test[.]run"], "only": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // startServe runs "serve" in-process on a short socket path until the test ends.
@@ -68,7 +80,7 @@ func startServe(t *testing.T, args ...string) string {
 
 func TestRunTakesTurnsThroughServe(t *testing.T) {
 	setup(t)
-	socket := startServe(t, "--slots", "1")
+	socket := startServe(t, "--slots", "1", "--config", helperHeavy(t))
 	t.Setenv(helperEnv, "sleep")
 	holder := holdRun(t, "run", "--socket", socket, "--timeout", "700ms", "--", os.Args[0], "-test.run=^$")
 	time.Sleep(250 * time.Millisecond)
@@ -98,7 +110,7 @@ func TestRunWithNoDaemonExits123(t *testing.T) {
 
 func TestNoSlotWithinMaxWaitExits124(t *testing.T) {
 	e := setup(t)
-	socket := startServe(t, "--slots", "1")
+	socket := startServe(t, "--slots", "1", "--config", helperHeavy(t))
 	t.Setenv(helperEnv, "sleep")
 	holdRun(t, "run", "--socket", socket, "--timeout", "2s", "--", os.Args[0], "-test.run=^$")
 	time.Sleep(250 * time.Millisecond)
@@ -139,5 +151,44 @@ func TestServeRefusesToRunElevated(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := Main(context.Background(), []string{"serve", "--socket", filepath.Join(t.TempDir(), "x.sock")}, strings.NewReader(""), &out, &errb); code != ExitCannotRun {
 		t.Errorf("serve elevated: code %d, want 126", code)
+	}
+}
+
+// A light command never waits, even with every slot taken.
+func TestALightCommandRunsWhileTheSlotsAreFull(t *testing.T) {
+	setup(t)
+	socket := startServe(t, "--slots", "1", "--config", helperHeavy(t))
+	t.Setenv(helperEnv, "sleep")
+	holdRun(t, "run", "--socket", socket, "--timeout", "3s", "--", os.Args[0], "-test.run=^$")
+	time.Sleep(250 * time.Millisecond)
+	code, _, stderr := main(t, context.Background(), "", "", "run", "--socket", socket, "--max-wait", "500ms", "--", "go", "version")
+	if code != 0 || strings.Contains(stderr, "waiting") {
+		t.Errorf("go version: code %d, stderr %q; want it run at once", code, stderr)
+	}
+}
+
+func TestServeRefusesAConfigItCannotUse(t *testing.T) {
+	setup(t)
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	os.WriteFile(bad, []byte(`{"version": 1, "heavy": ["("]}`), 0o600)
+	var out, errb bytes.Buffer
+	if code := Main(context.Background(), []string{"serve", "--config", bad, "--socket", filepath.Join(t.TempDir(), "x.sock")}, strings.NewReader(""), &out, &errb); code != ExitUsage {
+		t.Errorf("code %d, stderr %q; want 121", code, errb.String())
+	}
+}
+
+// serve gives a heavy command its share of the CPUs, through the variables builds read.
+func TestServeHandsAHeavyCommandItsShare(t *testing.T) {
+	setup(t)
+	for _, k := range []string{"GOFLAGS", "GOMAXPROCS", "MAKEFLAGS", "CARGO_BUILD_JOBS"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	socket := startServe(t, "--slots", "2", "--config", helperHeavy(t))
+	code, stdout, stderr := main(t, context.Background(), "", "hints", "run", "--socket", socket, "--")
+	k := strconv.Itoa(max(1, runtime.NumCPU()/2))
+	want := "GOFLAGS=-p=" + k + ";GOMAXPROCS=" + k + ";MAKEFLAGS=-j" + k + ";CARGO_BUILD_JOBS=" + k + ";"
+	if code != 0 || stdout != want {
+		t.Errorf("code %d, stdout %q, stderr %q; want %q", code, stdout, stderr, want)
 	}
 }

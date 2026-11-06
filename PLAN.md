@@ -38,15 +38,15 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     `--approved`, Ctrl+C, no elevation, and distinct exit codes (#12). Done: PR #45, 2026-11-06.
   - [x] **M3b: check** (#43). `adanext-exec check --json` and the protocol document.
     Done: PR #46, 2026-11-06.
-- [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
+- [x] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
   - [x] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
     in `docs/protocol.md` (#47). Done: PR #48, 2026-11-06.
   - [x] **M4b: the daemon and leases.** `serve`, its lifecycle, slots held as leases on the client
     connection (#9, #16), and what the Windows socket does not protect (#17). Done: PR #49,
     2026-11-06.
-  - [ ] **M4c: classification.** Which commands are heavy, configurable, and their fair share
-    (#15).
+  - [x] **M4c: classification.** Which commands are heavy, configurable, and their fair share
+    (#15). Done: PR #53, 2026-11-07.
 - [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Windows
   reuses M1a's Job Object and can start once M1a is in.
 - [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell.
@@ -57,6 +57,14 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M4c (PR #53, #15), which completes M4. Heavy commands are a built-in table read
+  the way each tool reads its own command line (global flags and their values, wrappers,
+  executors, shell substitutions), not regexes over the line, so arguments that name a tool are
+  data; a strict, owner-checked `serve --config` adds line patterns or replaces the table (the
+  owner approved this design). A freed slot goes to the client holding the fewest, the oldest
+  first among equals, a client being its caller's agent and session; a self-reported caller can
+  split itself, within the same-user trust the design states. A slot carries GOFLAGS,
+  GOMAXPROCS, MAKEFLAGS and CARGO_BUILD_JOBS at CPUs / slots, and a caller's own values win.
 - 2026-11-06: M4b (PR #49, #9, #16, #17). Nothing starts the daemon on its own; one per socket,
   by a lock held for its life. A client that asks for a slot and finds no daemon does not run
   its command, and one that does not ask shares no limits. A client watches its slot: a daemon

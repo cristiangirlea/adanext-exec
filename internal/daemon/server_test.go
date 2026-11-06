@@ -504,7 +504,7 @@ func TestTheSocketNeedsADirectoryOfItsOwn(t *testing.T) {
 func TestADeadlineHoldsAgainstAClientThatTakesNoWrites(t *testing.T) {
 	s := &Server{Slots: 1}
 	s.init()
-	holder := s.enqueue()
+	holder := s.enqueue("holder")
 	server, client := net.Pipe()
 	defer client.Close()
 	done := make(chan struct{})

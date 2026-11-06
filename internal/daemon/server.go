@@ -8,6 +8,8 @@ import (
 	"io"
 	"math"
 	"net"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -32,19 +34,22 @@ type Server struct {
 	mu    sync.Mutex
 	free  []int
 	queue []*waiter
+	held  map[string]int // slots held, per client
 	once  sync.Once
 }
 
 // waiter is one queued client: it learns its slot on grant, and a nudge whenever its place
 // in the queue may have changed.
 type waiter struct {
-	grant chan int
-	moved chan struct{}
-	slot  int
+	grant  chan int
+	moved  chan struct{}
+	slot   int
+	client string
 }
 
 func (s *Server) init() {
 	s.once.Do(func() {
+		s.held = map[string]int{}
 		for i := s.Slots; i >= 1; i-- {
 			s.free = append(s.free, i)
 		}
@@ -147,7 +152,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		out <- msg
 	}
 	start := time.Now()
-	w := s.enqueue()
+	w := s.enqueue(clientOf(m, conn))
 	defer func() {
 		if w != nil {
 			s.leave(w)
@@ -195,9 +200,18 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 // maxWaitMS is the longest wait a timer can hold; a longer one is no limit at all.
 const maxWaitMS = int64(math.MaxInt64 / int64(time.Millisecond))
 
+// clientOf names the client a request comes from, for its fair share: the agent and session it
+// gives, or, when it gives neither, its own connection.
+func clientOf(m Message, conn net.Conn) string {
+	if m.Caller != nil && (m.Caller.Agent != "" || m.Caller.Session != "") {
+		return "caller " + strconv.Quote(m.Caller.Agent) + " " + strconv.Quote(m.Caller.Session)
+	}
+	return fmt.Sprintf("connection %p", conn)
+}
+
 // enqueue puts a client in the queue and hands out whatever slots are free.
-func (s *Server) enqueue() *waiter {
-	w := &waiter{grant: make(chan int, 1), moved: make(chan struct{}, 1)}
+func (s *Server) enqueue(client string) *waiter {
+	w := &waiter{grant: make(chan int, 1), moved: make(chan struct{}, 1), client: client}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.queue = append(s.queue, w)
@@ -212,6 +226,9 @@ func (s *Server) leave(w *waiter) {
 	if w.slot > 0 {
 		s.free = append(s.free, w.slot)
 		w.slot = 0
+		if s.held[w.client]--; s.held[w.client] <= 0 {
+			delete(s.held, w.client)
+		}
 	} else {
 		for i, q := range s.queue {
 			if q == w {
@@ -223,15 +240,16 @@ func (s *Server) leave(w *waiter) {
 	s.dispatch()
 }
 
-// dispatch grants free slots to the head of the queue and nudges everyone still waiting.
-// s.mu is held.
+// dispatch grants free slots in fair order and nudges everyone still waiting. s.mu is held.
 func (s *Server) dispatch() {
 	for len(s.free) > 0 && len(s.queue) > 0 {
 		slot := s.free[len(s.free)-1]
 		s.free = s.free[:len(s.free)-1]
-		w := s.queue[0]
-		s.queue = s.queue[1:]
+		i := s.next()
+		w := s.queue[i]
+		s.queue = append(s.queue[:i], s.queue[i+1:]...)
 		w.slot = slot
+		s.held[w.client]++
 		w.grant <- slot
 	}
 	for _, q := range s.queue {
@@ -242,14 +260,37 @@ func (s *Server) dispatch() {
 	}
 }
 
+// before reports whether queue[i] gets a slot before queue[j]: a client holding fewer slots
+// goes first, and among equals the one that asked first. s.mu is held.
+func (s *Server) before(i, j int) bool {
+	hi, hj := s.held[s.queue[i].client], s.held[s.queue[j].client]
+	return hi < hj || hi == hj && i < j
+}
+
+// next is the queue index the next slot goes to; the queue is not empty. s.mu is held.
+func (s *Server) next() int {
+	best := 0
+	for i := 1; i < len(s.queue); i++ {
+		if s.before(i, best) {
+			best = i
+		}
+	}
+	return best
+}
+
 // position is a waiting client's place, 1 being next, or 0 once it has a slot.
 func (s *Server) position(w *waiter) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, q := range s.queue {
-		if q == w {
-			return i + 1
+	at := slices.Index(s.queue, w)
+	if at < 0 {
+		return 0
+	}
+	place := 1
+	for i := range s.queue {
+		if i != at && s.before(i, at) {
+			place++
 		}
 	}
-	return 0
+	return place
 }
