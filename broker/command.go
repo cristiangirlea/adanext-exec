@@ -52,6 +52,11 @@ type Command struct {
 	// command whose line cannot be opened is not run (ErrAudit). The environment is never
 	// written to the audit.
 	Audit *Audit
+
+	// Policy, when set, judges the command before it starts: one it refuses, or answers ask
+	// for, is not run (ErrRefused), and neither is one a zero Policy cannot judge (ErrPolicy).
+	// Nil judges nothing; the binary always sets one.
+	Policy *Policy
 }
 
 // Shell names a shell that reads a Command's Script.

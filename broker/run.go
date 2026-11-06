@@ -64,6 +64,10 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // With Command.Audit set, Run writes one line for the command, also for one it did not run,
 // and refuses to run a command whose line it cannot open (ErrAudit).
 //
+// With Command.Policy set, Run judges the command first and runs only what the policy allows:
+// a refusal, or an ask, since Run has no person to ask, returns a *RefusedError (ErrRefused)
+// with a zero Result.
+//
 // The console's Ctrl+C reaches the command as it reaches the caller. A caller that wants to
 // report after one handles os.Interrupt and cancels ctx: Run then kills the tree and returns.
 func Run(ctx context.Context, c Command) (Result, error) {
@@ -93,9 +97,24 @@ func Run(ctx context.Context, c Command) (Result, error) {
 			snap.dir, c.Dir = wd, wd
 		}
 	}
-	res, ran, err := run(ctx, c)
+	var verdict *Verdict
+	var res Result
+	var ran bool
+	var err error
+	if c.Policy != nil {
+		var v Verdict
+		if v, err = c.Policy.Check(c); err == nil {
+			verdict = &v
+			if v.Decision != Allow {
+				err = &RefusedError{Verdict: v}
+			}
+		}
+	}
+	if err == nil {
+		res, ran, err = run(ctx, c)
+	}
 	if log != nil {
-		if aerr := log.write(c.record(snap, begin, res, ran, err)); aerr != nil {
+		if aerr := log.write(c.record(snap, begin, verdict, res, ran, err)); aerr != nil {
 			err = errors.Join(err, aerr)
 		}
 	}
