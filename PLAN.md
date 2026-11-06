@@ -25,7 +25,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     the audit's own until M2's policy brings its secret list, which then shares them. Done:
     PR #35, 2026-11-06.
 - [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
-  tests.
+  tests. Done when M2a to M2c are.
+  - [ ] **M2a: the guard** (#36). harness's command guard in `internal/guard`, with its tests.
+  - [ ] **M2b: the policy** (#37). The JSON rules, the decisions, `Run` keeping to them, the
+    audit outcome, and the trust statement (#21).
+  - [ ] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`).
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
@@ -46,6 +50,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M2 split into the guard (M2a), the policy (M2b) and ask (M2c), one issue, branch
+  and PR each. The guard comes first, as a plain port that harness's tests prove; the policy is
+  then built around it. harness's `guard-env` rule stays in harness: it guards the environment
+  hrn builds for its runs, which the broker does not build.
 - 2026-11-06: M1d (PR #35). The audit is opt-in in the SDK (`Command.Audit`; nil writes none)
   and the binary will always set it (M3); when set, a command whose line cannot be opened is not
   run. Redaction ports harness's masking rules (`internal/mask`) into `internal/redact`, adds
