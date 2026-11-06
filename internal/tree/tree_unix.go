@@ -20,8 +20,9 @@ import (
 // carries the tree's random id, so the markers of nested brokers live side by side.
 const markerPrefix = "ADANEXT_EXEC_TREE_"
 
-// maxSweeps bounds the rounds of a kill: each round kills what the last scan found, and a tree
-// that keeps forking faster than it is killed is reported, not chased forever.
+// maxSweeps bounds the rounds of a kill: each round kills what the last scan found that was not
+// signalled yet, and a tree that keeps forking faster than it is killed is reported, not chased
+// forever.
 const maxSweeps = 50
 
 // Tree is a started command in its own process group, with a marker in its environment that
@@ -137,6 +138,10 @@ func (t *Tree) Kill() error {
 		errs = append(errs, fmt.Errorf("the group's leader was reaped elsewhere, so its id may belong to another process; only marked processes were killed: %w", lost))
 	}
 	marked := func(pid int) bool { return hasEnv(pid, t.marker) }
+	// A process sent SIGKILL can still show in the next scan while it dies: it is not signalled
+	// again, and a scan that finds only such processes ends the kill. Its descendants are
+	// still followed.
+	signalled := make(map[int]uint64)
 	for round := 0; round < maxSweeps; round++ {
 		procs, err := listProcs()
 		if err != nil {
@@ -152,14 +157,21 @@ func (t *Tree) Kill() error {
 				return errors.Join(append(errs, err)...)
 			}
 		}
-		if len(found) == 0 {
+		var fresh []proc
+		for _, p := range found {
+			if start, ok := signalled[p.pid]; !ok || start != p.start {
+				fresh = append(fresh, p)
+			}
+		}
+		if len(fresh) == 0 {
 			return errors.Join(errs...)
 		}
 		var killErrs []error
-		for _, p := range found {
+		for _, p := range fresh {
 			if err := killProc(p); err != nil {
 				killErrs = append(killErrs, err)
 			}
+			signalled[p.pid] = p.start
 		}
 		if len(killErrs) > 0 {
 			return errors.Join(append(errs, killErrs...)...)
