@@ -169,3 +169,44 @@ func TestTheAuditReadsTheEnvironmentAndDirectoryAsTheCommandStarted(t *testing.T
 		t.Fatalf("dir %q, want the directory the command started in, %q", got, start)
 	}
 }
+
+func TestTheCommandRunsInTheRecordedDirectoryEvenIfTheCallersChangesAfter(t *testing.T) {
+	recorded, elsewhere := t.TempDir(), t.TempDir()
+	t.Chdir(recorded)
+	old := getwd
+	t.Cleanup(func() { getwd = old })
+	getwd = func() (string, error) {
+		wd, err := old()
+		_ = os.Chdir(elsewhere) // the caller's directory changes just after Run read it
+		return wd, err
+	}
+	dir := t.TempDir()
+	var out strings.Builder
+	c := helper("pwd")
+	c.Stdout = &out
+	c.Audit = &Audit{Dir: dir}
+	if _, err := Run(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	ran, _ := filepath.EvalSymlinks(out.String())
+	want, _ := filepath.EvalSymlinks(recorded)
+	if !strings.EqualFold(ran, want) {
+		t.Fatalf("ran in %q, want the recorded %q", out.String(), recorded)
+	}
+}
+
+func TestACommandWhoseDirectoryCannotBeReadForTheAuditIsNotRun(t *testing.T) {
+	old := getwd
+	t.Cleanup(func() { getwd = old })
+	getwd = func() (string, error) { return "", errors.New("the directory was removed") }
+	marker := filepath.Join(t.TempDir(), "ran")
+	c := helper("touch", "ADANEXT_TEST_MARKER="+marker)
+	c.Audit = &Audit{Dir: t.TempDir()}
+	res, err := Run(context.Background(), c)
+	if !errors.Is(err, ErrAudit) || res != (Result{}) {
+		t.Fatalf("%+v, %v; want ErrAudit and nothing run", res, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the command ran")
+	}
+}

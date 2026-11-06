@@ -84,7 +84,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 			c.Env = snap.env
 		}
 		if snap.dir == "" {
-			wd, err := os.Getwd()
+			wd, err := getwd()
 			if err != nil {
 				log.f.Close()
 				return Result{}, fmt.Errorf("%w: read the working directory to record: %v", ErrAudit, err)
@@ -102,8 +102,12 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	return res, err
 }
 
-// now is the clock Run reads its start from; tests replace it.
-var now = time.Now
+// now is the clock Run reads its start from, and getwd how it reads the caller's directory;
+// tests replace them.
+var (
+	now   = time.Now
+	getwd = os.Getwd
+)
 
 // run is Run without the audit; ran says whether the command started.
 func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
