@@ -51,6 +51,9 @@ Newest first.
   run. Redaction ports harness's masking rules (`internal/mask`) into `internal/redact`, adds
   private keys and the value after a credential flag in argv, and masks the values of
   secret-named environment variables. Dates are UTC.
+- 2026-11-06: #33 (PR #34), a fix to M1a's macOS group check. A kill that came while signalled
+  members were still exiting was reported as refused, since `kinfo_proc` shows an exiting
+  process as running; its `P_WEXIT` flag now counts it as gone. CI caught it as a flaky test.
 - 2026-11-06: #31 (PR #32), a fix to M1b. A leader reaped before its start time was read
   (its caller ignoring SIGCHLD) left the tree with no bound, so Kill refused to kill anything
   and a marked descendant survived; CI caught it as a flaky test. The bound now comes from the

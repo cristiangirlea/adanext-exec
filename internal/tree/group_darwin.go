@@ -13,12 +13,20 @@ import (
 // <sys/proc.h>.
 const (
 	kinfoProcSize = 648
-	kinfoStat     = 36  // kp_proc.p_stat
-	kinfoPGID     = 564 // kp_eproc.e_pgid
-	stateZombie   = 5   // SZOMB
+	kinfoFlag     = 32     // kp_proc.p_flag
+	kinfoStat     = 36     // kp_proc.p_stat
+	kinfoPGID     = 564    // kp_eproc.e_pgid
+	stateZombie   = 5      // SZOMB
+	flagExiting   = 0x2000 // P_WEXIT: the process is exiting, though p_stat still says running
 )
 
-// groupHasLiveMembers reports whether a process that is not a zombie is in the group.
+// gone reports whether a kinfo_proc entry is a zombie or a process on its way to being one.
+func gone(k []byte) bool {
+	return k[kinfoStat] == stateZombie || binary.LittleEndian.Uint32(k[kinfoFlag:])&flagExiting != 0
+}
+
+// groupHasLiveMembers reports whether a process that is neither a zombie nor exiting is in the
+// group.
 func groupHasLiveMembers(pgid int) bool {
 	return groupHasLiveMembersIn(pgid, func() (string, error) { return syscall.Sysctl("kern.proc.all") }, 10*time.Millisecond)
 }
@@ -58,7 +66,7 @@ func liveInTable(pgid int, read func() (string, error)) (bool, error) {
 	}
 	for off := 0; off+kinfoProcSize <= len(b); off += kinfoProcSize {
 		k := b[off : off+kinfoProcSize]
-		if int(int32(binary.LittleEndian.Uint32(k[kinfoPGID:]))) == pgid && k[kinfoStat] != stateZombie {
+		if int(int32(binary.LittleEndian.Uint32(k[kinfoPGID:]))) == pgid && !gone(k) {
 			return true, nil
 		}
 	}

@@ -178,3 +178,19 @@ func TestEnvFromProcArgsReadsOnlyTheEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestMembersWalkThroughAnExitingProcessWithoutTakingIt(t *testing.T) {
+	tr := &Tree{pgid: 100, start: 50}
+	procs := []proc{
+		{pid: 100, ppid: 1, pgid: 100, start: 50, exiting: true}, // the leader, exiting
+		{pid: 101, ppid: 100, pgid: 101, start: 60},              // its child, out of the group and unmarked
+		{pid: 102, ppid: 100, pgid: 100, start: 61},              // a member
+		{pid: 103, ppid: 102, pgid: 103, start: 70, exiting: true},
+		{pid: 104, ppid: 103, pgid: 104, start: 80}, // reached only through the exiting 103
+		{pid: 105, ppid: 101, pgid: 105, start: 90, zombie: true},
+	}
+	got := pids(tr.members(procs, true, func(int) bool { return false }))
+	if want := "101 102 104"; got != want {
+		t.Fatalf("members %s, want %s: the live ones, also behind exiting parents", got, want)
+	}
+}
