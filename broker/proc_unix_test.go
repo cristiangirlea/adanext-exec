@@ -43,14 +43,38 @@ func helperPlatform(mode string) {
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
 		startRecorded(child)
 		os.Exit(0)
+	case "middle-keeper":
+		// The leader: starts a middle process that stays, and stays itself.
+		startRecordedTo(helper("middle").cmdForTest(), os.Getenv("ADANEXT_TEST_MIDDLE_FILE"))
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "middle":
+		// Starts a grandchild that leaves the group and drops the environment, so only its
+		// parent links it to the tree, then stays.
+		child := helper("sleep").cmdForTest()
+		child.Env = []string{helperEnv + "=sleep"}
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		startRecorded(child)
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "clean-orphaner":
+		// Leaves a grandchild that dropped the environment and the group, holding stdout,
+		// and exits: nothing links that grandchild to the tree any more.
+		child := helper("sleep").cmdForTest()
+		child.Env = []string{helperEnv + "=sleep"}
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		startRecorded(child)
+		os.Exit(0)
 	case "selfterm":
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	case "echild":
-		// Children are reaped by the kernel here, so Run loses its leader.
+		// Children are reaped by the kernel here, so Run loses its leader, which leaves a
+		// grandchild behind.
 		signal.Ignore(syscall.SIGCHLD)
-		res, err := Run(context.Background(), helper("exit"))
+		res, err := Run(context.Background(), helper("orphaner", "ADANEXT_TEST_PID_FILE="+os.Getenv("ADANEXT_TEST_PID_FILE")))
 		rep := echildReport{ExitCode: res.ExitCode}
 		if err != nil {
 			rep.Err = err.Error()
@@ -60,14 +84,49 @@ func helperPlatform(mode string) {
 	}
 }
 
-func TestRunReportsOutputHeldOpenFromOutsideTheGroup(t *testing.T) {
+func TestRunKillsAnOrphanThatLeftTheGroup(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "id.json")
+	watch(t, file)
 	c := helper("escapee", "ADANEXT_TEST_PID_FILE="+file)
+	c.Timeout = time.Minute
+	res, err := Run(context.Background(), c)
+	id := readIdentity(t, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("result %+v, want exit code 0", res)
+	}
+	assertGone(t, id)
+}
+
+func TestRunKillsADescendantThatLeftTheGroupAndDroppedTheMarker(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "id.json")
+	middleFile := filepath.Join(t.TempDir(), "middle.json")
+	watch(t, file, middleFile)
+	c := helper("middle-keeper", "ADANEXT_TEST_PID_FILE="+file, "ADANEXT_TEST_MIDDLE_FILE="+middleFile)
+	c.Timeout = 3 * time.Second
+	res, err := Run(context.Background(), c)
+	id := readIdentity(t, file)
+	assertGone(t, readIdentity(t, middleFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut {
+		t.Fatalf("result %+v, want a timeout", res)
+	}
+	assertGone(t, id)
+}
+
+func TestRunReportsOutputHeldByAnOrphanItCannotFind(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "id.json")
+	watch(t, file)
+	c := helper("clean-orphaner", "ADANEXT_TEST_PID_FILE="+file)
 	c.Timeout = time.Minute
 	start := time.Now()
 	res, err := Run(context.Background(), c)
 	took := time.Since(start)
-	readIdentity(t, file) // killed at cleanup: leaving the group is M1b's
+	readIdentity(t, file) // out of reach by design: killed at cleanup
 	if !errors.Is(err, errOutputHeld) {
 		t.Fatalf("err %v, want the held output reported", err)
 	}
@@ -89,10 +148,14 @@ func TestRunReportsASignalFromElsewhere(t *testing.T) {
 }
 
 func TestRunNeverSignalsAGroupWhoseLeaderWasReapedElsewhere(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "id.json")
 	var out strings.Builder
-	cmd := helper("echild").cmdForTest()
+	watch(t, file)
+	cmd := helper("echild", "ADANEXT_TEST_PID_FILE="+file).cmdForTest()
 	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	id := readIdentity(t, file)
+	if err != nil {
 		t.Fatalf("helper: %v (%s)", err, out.String())
 	}
 	var rep echildReport
@@ -102,4 +165,6 @@ func TestRunNeverSignalsAGroupWhoseLeaderWasReapedElsewhere(t *testing.T) {
 	if !strings.Contains(rep.Err, "reaped elsewhere") || rep.ExitCode != -1 {
 		t.Fatalf("report %+v, want the lost leader reported and no group signalled", rep)
 	}
+	// What the leader left still carries the marker, so it is killed all the same.
+	assertGone(t, id)
 }

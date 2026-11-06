@@ -14,3 +14,7 @@ func processState(pid int) (born string, alive bool, err error) {
 	}
 	return "", true, nil
 }
+
+func callerDeath() (leaderDies, childDies bool, why string) {
+	return false, false, "Run refuses on this platform"
+}

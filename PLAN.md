@@ -16,8 +16,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     when the command exits: a Job Object on Windows (from harness), a process group on Linux and
     macOS. Refuses batch files as argv on Windows (#18); the job never allows breakaway and
     nests (#19). Done: PR #27, 2026-11-06.
-  - [ ] **M1b: what leaves the group on Unix.** Kill descendants that called `setsid` (#10) and
-    the group when the caller dies (#11), or say where it cannot.
+  - [x] **M1b: what leaves the group on Unix.** Kill descendants that called `setsid` (#10) and
+    the group when the caller dies (#11), or say where it cannot. Done: PR #28, 2026-11-06.
   - [x] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
     buffer does. Done: PR #30, 2026-11-06.
   - [ ] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
@@ -50,6 +50,13 @@ Newest first.
   output as it runs; the tail is held and written at the end, which delays output past the
   head until the command ends. Cutting may split a multi-byte character, as harness's buffer
   does.
+- 2026-11-06: M1b (PR #28). A process that leaves the group is found by a marker in the
+  environment, the technique of build servers' process-tree killers, and by parent links at
+  kill time, instead of `PR_SET_CHILD_SUBREAPER` (#10): a subreaper changes the whole caller,
+  and the broker could not tell its commands' orphans from the caller's other children's. The
+  gaps (a cleared environment plus an orphaned process, unreadable processes, other services)
+  are in the design. For #11 only Linux's parent-death signal exists, and it reaches the
+  command's own process, not its descendants; macOS has none; the design says so.
 - 2026-11-06: M1a (PR #27). `broker.Run` also kills what a command leaves running when its own
   process exits, on every platform, so nothing a command starts outlives it; the design said
   only "when it must stop". A job that cannot be made or assigned refuses the command

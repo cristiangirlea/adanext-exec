@@ -36,7 +36,15 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "parent", "orphaner":
 		// Starts a grandchild that holds this process's stdout, records it, then waits a
-		// minute (parent) or exits at once (orphaner).
+		// minute (parent) or exits at once (orphaner). With ADANEXT_TEST_LEADER_FILE it
+		// records itself there too.
+		if file := os.Getenv("ADANEXT_TEST_LEADER_FILE"); file != "" {
+			born, _, err := processState(os.Getpid())
+			data, _ := json.Marshal(identity{os.Getpid(), born})
+			if err != nil || os.WriteFile(file, data, 0o600) != nil {
+				os.Exit(2)
+			}
+		}
 		child := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
 		child.Env = append(os.Environ(), helperEnv+"=sleep")
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
@@ -45,6 +53,12 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(0)
 		}
 		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "host":
+		// A caller of Run, for the tests that kill it while its command runs.
+		c := helper("parent", "ADANEXT_TEST_PID_FILE="+os.Getenv("ADANEXT_TEST_PID_FILE"), "ADANEXT_TEST_LEADER_FILE="+os.Getenv("ADANEXT_TEST_LEADER_FILE"))
+		c.Timeout = time.Minute
+		_, _ = Run(context.Background(), c)
 		os.Exit(0)
 	case "exit":
 		fmt.Fprint(os.Stdout, "to stdout")
@@ -90,7 +104,10 @@ func TestHelperProcess(t *testing.T) {
 
 // startRecorded starts child and writes its identity to ADANEXT_TEST_PID_FILE. A child that
 // cannot be recorded is killed, since no test could find it.
-func startRecorded(child *exec.Cmd) {
+func startRecorded(child *exec.Cmd) { startRecordedTo(child, os.Getenv("ADANEXT_TEST_PID_FILE")) }
+
+// startRecordedTo starts child and writes its identity to file.
+func startRecordedTo(child *exec.Cmd, file string) {
 	if err := child.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -106,7 +123,7 @@ func startRecorded(child *exec.Cmd) {
 		fail(err)
 	}
 	data, _ := json.Marshal(identity{child.Process.Pid, born})
-	if err := os.WriteFile(os.Getenv("ADANEXT_TEST_PID_FILE"), data, 0o600); err != nil {
+	if err := os.WriteFile(file, data, 0o600); err != nil {
 		fail(err)
 	}
 }
@@ -143,6 +160,19 @@ func readIdentity(t *testing.T, file string) identity {
 	}
 	t.Fatal("the helper did not record its grandchild")
 	return identity{}
+}
+
+// watch has every process recorded in files killed at cleanup, whatever the test reached.
+// Register it before starting the helpers that write the records.
+func watch(t *testing.T, files ...string) {
+	t.Cleanup(func() {
+		for _, f := range files {
+			var id identity
+			if data, err := os.ReadFile(f); err == nil && json.Unmarshal(data, &id) == nil && id.PID > 0 {
+				killIfSame(id)
+			}
+		}
+	})
 }
 
 // track kills the process at cleanup if it is still the same process.
@@ -524,4 +554,82 @@ func TestRunRunsShellText(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunWhenItsCallerIsKilled(t *testing.T) {
+	leaderDies, childDies, why := callerDeath()
+	t.Log(why)
+	dir := t.TempDir()
+	childFile, leaderFile := filepath.Join(dir, "child.json"), filepath.Join(dir, "leader.json")
+	watch(t, childFile, leaderFile)
+	host := helper("host", "ADANEXT_TEST_PID_FILE="+childFile, "ADANEXT_TEST_LEADER_FILE="+leaderFile).cmdForTest()
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Process.Kill(); _ = host.Wait() })
+	leader, child := readIdentity(t, leaderFile), readIdentity(t, childFile)
+	if err := host.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = host.Wait()
+	for _, c := range []struct {
+		name string
+		id   identity
+		dies bool
+	}{{"the command's own process", leader, leaderDies}, {"its child", child, childDies}} {
+		if c.dies {
+			assertGone(t, c.id)
+			continue
+		}
+		time.Sleep(500 * time.Millisecond)
+		if born, alive, err := processState(c.id.PID); err != nil || !alive || born != c.id.Born {
+			t.Fatalf("%s was expected to outlive the caller here (%s), but is gone (%v)", c.name, why, err)
+		}
+	}
+}
+
+func TestRunLeavesAnotherTreeAlone(t *testing.T) {
+	dir := t.TempDir()
+	keptFile, doneFile := filepath.Join(dir, "kept.json"), filepath.Join(dir, "done.json")
+	watch(t, keptFile, doneFile)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	kept := helper("parent", "ADANEXT_TEST_PID_FILE="+keptFile)
+	kept.Timeout = time.Minute
+	results := make(chan Result, 1)
+	go func() { res, _ := Run(ctx, kept); results <- res }()
+	keptID := readIdentity(t, keptFile)
+	other := helper("orphaner", "ADANEXT_TEST_PID_FILE="+doneFile)
+	if _, err := Run(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	assertGone(t, readIdentity(t, doneFile))
+	if born, alive, err := processState(keptID.PID); err != nil || !alive || born != keptID.Born {
+		t.Fatalf("ending one tree killed another's process (%v)", err)
+	}
+	cancel()
+	if res := <-results; !res.Canceled {
+		t.Fatalf("the kept tree: %+v, want cancelled", res)
+	}
+	assertGone(t, keptID)
+}
+
+func TestRunKillsTheTreeOfABrokerItRuns(t *testing.T) {
+	// The command is itself a caller of Run: its own command and that one's child are killed
+	// with it.
+	dir := t.TempDir()
+	childFile, leaderFile := filepath.Join(dir, "child.json"), filepath.Join(dir, "leader.json")
+	watch(t, childFile, leaderFile)
+	c := helper("host", "ADANEXT_TEST_PID_FILE="+childFile, "ADANEXT_TEST_LEADER_FILE="+leaderFile)
+	c.Timeout = 3 * time.Second
+	res, err := Run(context.Background(), c)
+	leader, child := readIdentity(t, leaderFile), readIdentity(t, childFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut {
+		t.Fatalf("result %+v, want a timeout", res)
+	}
+	assertGone(t, leader)
+	assertGone(t, child)
 }
