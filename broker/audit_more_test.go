@@ -108,6 +108,40 @@ func TestSeveralProcessesShareOneAuditFile(t *testing.T) {
 	}
 }
 
+func TestTheAuditRecordsTheDirectoryTheCommandRanIn(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	dir := t.TempDir()
+	var out strings.Builder
+	c := helper("pwd")
+	c.Stdout = &out
+	c.Audit = &Audit{Dir: dir}
+	if _, err := Run(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	ran, _ := filepath.EvalSymlinks(out.String())
+	recorded, _ := filepath.EvalSymlinks(readAudit(t, dir)[0]["dir"].(string))
+	if ran == "" || !strings.EqualFold(ran, recorded) {
+		t.Fatalf("ran in %q, the audit says %q", out.String(), readAudit(t, dir)[0]["dir"])
+	}
+}
+
+func TestTheAuditMasksAnInheritedSecretThatChangesWhileTheCommandRuns(t *testing.T) {
+	// No Env: the command inherits this process's environment, where the secret lives.
+	const secret = "the-inherited-value-before-77"
+	t.Setenv("ADANEXT_TEST_TOKEN", secret)
+	t.Setenv(helperEnv, "sleep")
+	dir := t.TempDir()
+	c := Command{Args: []string{os.Args[0], "-test.run=^TestHelperProcess$", "--", secret}, Timeout: 2 * time.Second, Audit: &Audit{Dir: dir}}
+	time.AfterFunc(500*time.Millisecond, func() { os.Setenv("ADANEXT_TEST_TOKEN", "another-value-entirely-00") })
+	if _, err := Run(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if data := string(auditBytes(t, dir)); strings.Contains(data, secret) {
+		t.Fatalf("the audit holds the inherited secret: %s", data)
+	}
+}
+
 func TestTheAuditReadsTheEnvironmentAndDirectoryAsTheCommandStarted(t *testing.T) {
 	const secret = "the-value-before-the-start-42"
 	t.Setenv("ADANEXT_TEST_TOKEN", secret)

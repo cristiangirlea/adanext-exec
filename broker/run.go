@@ -84,7 +84,13 @@ func Run(ctx context.Context, c Command) (Result, error) {
 			c.Env = snap.env
 		}
 		if snap.dir == "" {
-			snap.dir, _ = os.Getwd()
+			wd, err := os.Getwd()
+			if err != nil {
+				log.f.Close()
+				return Result{}, fmt.Errorf("%w: read the working directory to record: %v", ErrAudit, err)
+			}
+			// The command runs where the audit says, whatever the caller's directory becomes.
+			snap.dir, c.Dir = wd, wd
 		}
 	}
 	res, ran, err := run(ctx, c)
