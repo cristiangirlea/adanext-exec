@@ -31,6 +31,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	agent := flags.String("agent", "", "who asked, for the audit")
 	session := flags.String("session", "", "the caller's session, for the audit")
 	runID := flags.String("run-id", "", "the caller's run, for the audit")
+	slots := flags.Bool("slots", false, "wait for one of the daemon's heavy-command slots first")
+	socket := flags.String("socket", "", "the daemon's socket (default: the user's state directory); implies --slots")
+	maxWait := flags.Duration("max-wait", 0, "give up after waiting this long for a slot (0: no limit)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -43,6 +46,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageFail(stderr, "a negative --timeout")
 	case *outputCap < 0:
 		return usageFail(stderr, "a negative --output-cap")
+	case *maxWait < 0:
+		return usageFail(stderr, "a negative --max-wait")
+	case *maxWait > 0 && !*slots && *socket == "":
+		return usageFail(stderr, "--max-wait needs --slots")
 	}
 	c := broker.Command{
 		Stdin: stdin, Stdout: stdout, Stderr: stderr,
@@ -85,6 +92,18 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 	}
 	c.Audit = &broker.Audit{Dir: dir}
+	if *slots || *socket != "" {
+		path := *socket
+		if path == "" {
+			if path, err = defaultSocket(); err != nil {
+				fmt.Fprintf(stderr, "adanext-exec: %v: %v\n", broker.ErrNoDaemon, err)
+				return ExitNoDaemon
+			}
+		}
+		c.Slots = &broker.Slots{Socket: path, MaxWait: *maxWait, Waiting: func(p int) {
+			fmt.Fprintf(stderr, "adanext-exec: waiting for a heavy-command slot (place %d)\n", p)
+		}}
+	}
 
 	res, err := broker.Run(ctx, c)
 	ran := res != (broker.Result{})
@@ -98,6 +117,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return ExitRefused
 		case programNotFound(err):
 			return ExitNotFound
+		case errors.Is(err, broker.ErrNoDaemon), errors.Is(err, broker.ErrSlotLost):
+			return ExitNoDaemon
+		case errors.Is(err, broker.ErrNoSlot):
+			return ExitTimeout
 		case errors.Is(err, context.Canceled):
 			return ExitInterrupted
 		case errors.Is(err, context.DeadlineExceeded):
@@ -106,6 +129,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return ExitCannotRun
 	}
 	switch {
+	case errors.Is(err, broker.ErrSlotLost):
+		// The daemon went away while the command held its slot, and the command was killed.
+		return ExitNoDaemon
 	case err != nil:
 		// It ran, but something after it failed: its output, its audit line, or killing what
 		// it left running. Its own code would hide that.

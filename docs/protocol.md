@@ -24,6 +24,9 @@ exits.
 | `--audit-dir DIR` | The audit directory, instead of the user's state directory. |
 | `--timeout D` | Kill the command's tree after D (Go's duration syntax: `90s`, `5m`). |
 | `--output-cap N` | Bound each output stream to N bytes. |
+| `--slots` | Wait for one of the daemon's heavy-command slots before the command starts, and hold it until the command ends. The wait is shown on standard error with its place in the queue. |
+| `--socket PATH` | The daemon's socket, instead of `<state dir>/adanext-exec/daemon/daemon.sock`; implies `--slots`. |
+| `--max-wait D` | With `--slots`: give up after waiting D for a slot. The wait counts toward no `--timeout`, which starts with the command. |
 | `--agent`, `--session`, `--run-id` | Who asked, for the audit; self-reported. |
 
 **The policy is always set.** It comes from `--policy`, `--profile`, or
@@ -50,8 +53,8 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 120 | The command ran, but something after it failed: writing its output, writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
 | 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`. |
 | 122 | Reserved: the command went over its memory ceiling (M5). |
-| 123 | Reserved: the daemon is needed and not running (M4). |
-| 124 | The command ran past `--timeout`; its tree was killed. |
+| 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
+| 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
 | 126 | Not run: it could not start, be contained or be audited, the shell is unknown, or the binary runs elevated. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
@@ -100,6 +103,14 @@ outcome but `-h` has its one answer line, a usage error included:
 | 126 | No decision: the binary runs elevated (the answer says so), or the answer could not be written. |
 
 ## The daemon (M4)
+
+```
+adanext-exec serve [--slots N] [--socket PATH]
+```
+
+Runs the daemon until it is interrupted: N heavy-command slots (default: the number of CPUs
+divided by 4, at least 1) on PATH (default: `<state dir>/adanext-exec/daemon/daemon.sock`). It
+refuses to start elevated, or when another daemon holds the socket (exit 126).
 
 `adanext-exec serve` shares heavy-command slots among every client on the machine. A client
 opens one connection to the daemon's local socket per command, and both sides write one JSON

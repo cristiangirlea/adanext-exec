@@ -76,7 +76,9 @@ func setup(t *testing.T) env {
 	oldConfig, oldAudit := configDir, auditDir
 	configDir = func() (string, error) { return e.config, nil }
 	auditDir = func() (string, error) { return e.audit, nil }
-	t.Cleanup(func() { configDir, auditDir = oldConfig, oldAudit })
+	oldSocket := defaultSocket
+	defaultSocket = func() (string, error) { return filepath.Join(e.config, "none.sock"), nil }
+	t.Cleanup(func() { configDir, auditDir, defaultSocket = oldConfig, oldAudit, oldSocket })
 	t.Setenv("ADANEXT_CLI_MARKER", e.marker)
 	return e
 }

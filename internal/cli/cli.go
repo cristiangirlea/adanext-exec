@@ -19,9 +19,11 @@ const (
 	ExitUsage = 121
 	// ExitMemory is reserved for the memory ceiling (M5).
 	ExitMemory = 122
-	// ExitNoDaemon is reserved for a missing daemon (M4).
+	// ExitNoDaemon: the command asked for a heavy-command slot and no daemon answered, or the
+	// daemon went away while the command held its slot, and the command was killed.
 	ExitNoDaemon = 123
-	// ExitTimeout: the command ran past its timeout, and its tree was killed.
+	// ExitTimeout: the command ran past its timeout, and its tree was killed; or it waited past
+	// --max-wait for a slot, or the daemon refused it one, and did not run.
 	ExitTimeout = 124
 	// ExitRefused: the policy refused the command, answered ask with no approval, or could not
 	// be used; the command did not run.
@@ -41,6 +43,7 @@ const usage = `usage:
   adanext-exec run [flags] -- <program> [args...]
   adanext-exec run [flags] --shell <name> -- <script>
   adanext-exec check --json [--policy FILE | --profile NAME] < request.json
+  adanext-exec serve [--slots N] [--socket PATH]
 
 Run "adanext-exec run -h" for the flags.
 `
@@ -63,6 +66,12 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return ExitCannotRun
 		}
 		return run(ctx, args[1:], stdin, stdout, stderr)
+	case "serve":
+		if isElevated() {
+			fmt.Fprintln(stderr, "adanext-exec: "+errElevated)
+			return ExitCannotRun
+		}
+		return serve(ctx, args[1:], stderr)
 	case "check":
 		// check answers the refusal in its own JSON, as it answers everything else.
 		return check(args[1:], stdin, stdout, stderr)

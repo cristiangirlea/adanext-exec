@@ -68,6 +68,11 @@ func TestHelperProcess(t *testing.T) {
 	case "cat":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 		os.Exit(0)
+	case "env":
+		for _, kv := range os.Environ() {
+			fmt.Fprintln(os.Stdout, kv)
+		}
+		os.Exit(0)
 	case "args":
 		for i, a := range os.Args {
 			if a == "--" {
