@@ -50,11 +50,12 @@ func listProcs() ([]proc, error) {
 		sec := le.Uint64(k[kinfoStartSec:])
 		usec := uint64(le.Uint32(k[kinfoStartUsec:]))
 		procs = append(procs, proc{
-			pid:    int(int32(le.Uint32(k[kinfoPID:]))),
-			ppid:   int(int32(le.Uint32(k[kinfoPPID:]))),
-			pgid:   int(int32(le.Uint32(k[kinfoPGID:]))),
-			start:  sec*1_000_000 + usec,
-			zombie: gone(k),
+			pid:     int(int32(le.Uint32(k[kinfoPID:]))),
+			ppid:    int(int32(le.Uint32(k[kinfoPPID:]))),
+			pgid:    int(int32(le.Uint32(k[kinfoPGID:]))),
+			start:   sec*1_000_000 + usec,
+			zombie:  k[kinfoStat] == stateZombie,
+			exiting: binary.LittleEndian.Uint32(k[kinfoFlag:])&flagExiting != 0,
 		})
 	}
 	return procs, nil
@@ -92,7 +93,7 @@ func killProc(p proc) error {
 	if err != nil {
 		return fmt.Errorf("check process %d before the signal: %w", p.pid, err)
 	}
-	if q.start != p.start || q.zombie {
+	if q.start != p.start || q.zombie || q.exiting {
 		return nil // gone, or the pid now names another process
 	}
 	if err := syscall.Kill(p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {

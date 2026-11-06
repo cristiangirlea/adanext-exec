@@ -204,7 +204,8 @@ func (t *Tree) killGroup() error {
 }
 
 // members picks the live processes of the tree from a scan: the group's (when byGroup), those
-// marked, and their descendants. A process that started before the leader is never one, and a
+// marked, and their descendants; an exiting process is walked through but not returned, since a
+// signal cannot reach it. A process that started before the leader is never one, and a
 // parent link is followed only to a child no older than its parent, so a link read from a pid
 // that was reused during the scan does not lead to an older process. This process is never one.
 func (t *Tree) members(procs []proc, byGroup bool, marked func(int) bool) []proc {
@@ -229,7 +230,9 @@ func (t *Tree) members(procs []proc, byGroup bool, marked func(int) bool) []proc
 			continue
 		}
 		seen[p.pid] = true
-		found = append(found, p)
+		if !p.exiting {
+			found = append(found, p)
+		}
 		for _, c := range children[p.pid] {
 			if c.start >= p.start {
 				queue = append(queue, c)
@@ -247,6 +250,7 @@ type proc struct {
 	pid, ppid, pgid int
 	start           uint64 // start time, in the platform's own unit
 	zombie          bool
+	exiting         bool // on its way out (macOS P_WEXIT): needs no signal, may still have children
 }
 
 // hasEnv reports whether the process's environment holds the entry exactly. A process whose
