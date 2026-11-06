@@ -272,6 +272,15 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 	if err := t.Kill(); err != nil {
 		errs = append(errs, fmt.Errorf("kill what the command left running: %w", err))
 	}
+	// The memory watch ends here, while the leader still holds its group id: once it is
+	// reaped, the id can name another program's group.
+	res.MemoryEnforced = c.MemoryLimit > 0 && t.MemoryEnforced()
+	exceeded, peak, memErr := t.FinalMemory()
+	res.MemoryExceeded, res.PeakMemory = exceeded, int64(peak)
+	if memErr != nil {
+		// The ceiling could not be watched, so the tree was stopped: say why.
+		errs = append(errs, fmt.Errorf("watch the memory ceiling: %w", memErr))
+	}
 	err = cmd.Wait()
 	in.close()
 	var exitErr *exec.ExitError
@@ -288,13 +297,6 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 	res.ExitCode = -1
 	if cmd.ProcessState != nil {
 		res.ExitCode, res.Signal = cmd.ProcessState.ExitCode(), signalOf(cmd.ProcessState)
-	}
-	res.MemoryEnforced = c.MemoryLimit > 0 && t.MemoryEnforced()
-	exceeded, peak, memErr := t.FinalMemory()
-	res.MemoryExceeded, res.PeakMemory = exceeded, int64(peak)
-	if err := memErr; err != nil {
-		// The ceiling could not be watched, so the tree was stopped: say why.
-		errs = append(errs, fmt.Errorf("watch the memory ceiling: %w", err))
 	}
 	if res.TimedOut || res.Canceled || res.MemoryExceeded {
 		res.ExitCode, res.Signal = -1, ""

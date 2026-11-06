@@ -24,19 +24,12 @@ func TestParseSize(t *testing.T) {
 	}
 }
 
-// A command over its ceiling exits 122 where the ceiling is enforced; elsewhere the binary says
-// the ceiling is not enforced, and the command runs.
+// A command over its ceiling exits 122, on every platform the ceiling is enforced on.
 func TestTheMemoryCeiling(t *testing.T) {
 	setup(t)
 	code, _, stderr := main(t, context.Background(), "", "alloc", "run", "--memory", "128M", "--timeout", "1m", "--")
-	if runtime.GOOS == "windows" {
-		if code != ExitMemory {
-			t.Errorf("code %d, stderr %q; want 122", code, stderr)
-		}
-		return
-	}
-	if code != 0 || !strings.Contains(stderr, "not enforced") {
-		t.Errorf("code %d, stderr %q; want it run, with the ceiling said not to be enforced", code, stderr)
+	if code != ExitMemory || strings.Contains(stderr, "not enforced") {
+		t.Errorf("code %d, stderr %q; want 122", code, stderr)
 	}
 }
 
@@ -51,7 +44,8 @@ func TestABadMemorySizeIsAUsageError(t *testing.T) {
 // hidden.
 func TestABrokerFailureOutranksTheMemoryCeiling(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("the ceiling is enforced on Windows only, so far")
+		// The watch elsewhere kills the helper outright, so it writes no crash report to fail on.
+		t.Skip("needs the helper's crash report as its allocation is refused, a Windows event")
 	}
 	e := setup(t)
 	auditDirOf = func(*testing.T) string { return e.audit }

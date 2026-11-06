@@ -2,14 +2,199 @@
 
 package tree
 
-import "os/exec"
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"syscall"
+	"time"
+)
 
-// StartLimited is Start with a ceiling on the memory of the whole tree, in bytes. Linux and macOS
-// do not enforce it yet (MemoryEnforced reports so): the command starts as with Start.
-func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) { return Start(cmd) }
+// memoryPoll is how often the watch reads the tree's memory.
+const memoryPoll = 100 * time.Millisecond
 
-// MemoryEnforced reports whether a memory ceiling is enforced here: not yet on Linux and macOS.
-func (t *Tree) MemoryEnforced() bool { return false }
+// probeRSS is how StartLimited learns whether memory can be read here; tests replace it.
+var probeRSS = residentBytes
 
-// FinalMemory is the tree's memory once the command has ended; nothing is watched here yet.
-func (t *Tree) FinalMemory() (exceeded bool, peak uint64, err error) { return false, 0, nil }
+// StartLimited is Start with a ceiling on the resident memory of the whole tree, in bytes; 0 is
+// none. A watch reads the memory of every process in the tree's group and of their descendants
+// every 100 ms, and kills the tree once the total passes the ceiling. It is best effort, and
+// says so: a spike shorter than one read can pass. Where the platform's memory cannot be read
+// here, the ceiling is not enforced, and MemoryEnforced says so.
+func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) {
+	t, err := Start(cmd)
+	if err != nil {
+		return nil, err
+	}
+	t.limit = memoryLimit
+	t.readRSS = residentBytes
+	t.readMark = func(pid int) (bool, error) { return envHas(pid, t.marker) }
+	if memoryLimit > 0 {
+		// A platform that cannot read the broker's own memory cannot read the tree's either:
+		// then nothing is watched, and MemoryEnforced says so.
+		if _, err := probeRSS(os.Getpid()); err == nil {
+			t.enforced = true
+			t.watchMemory()
+		}
+	}
+	return t, nil
+}
+
+// watchMemory reads the tree's resident memory until stopped, and kills the tree once it passes
+// the ceiling. A process table that cannot be read stops the tree too, since the ceiling can no
+// longer be watched; the error is kept.
+func (t *Tree) watchMemory() {
+	t.stopWatch = make(chan struct{})
+	t.watchDone = make(chan struct{})
+	go func() {
+		defer close(t.watchDone)
+		tick := time.NewTicker(memoryPoll)
+		defer tick.Stop()
+		marks := map[pidStart]bool{}
+		for {
+			select {
+			case <-t.stopWatch:
+				return
+			case <-tick.C:
+			}
+			total, err := t.treeMemory(marks)
+			if err != nil {
+				t.setMemoryErr(err)
+				_ = t.Kill()
+				return
+			}
+			for {
+				seen := t.peakSeen.Load()
+				if total <= seen || t.peakSeen.CompareAndSwap(seen, total) {
+					break
+				}
+			}
+			if total > t.limit {
+				t.exceeded.Store(true)
+				_ = t.Kill()
+				return
+			}
+		}
+	}()
+}
+
+// pidStart names one process across reads: a pid with its start time.
+type pidStart struct {
+	pid   int
+	start uint64
+}
+
+// treeMemory sums the resident memory of the tree: its group, the processes that carry its
+// marker (also those that left the group), and their descendants. A process's environment
+// does not change once it runs, so whether it carries the marker is read once per process and
+// kept; an environment that could not be read is read again next time. The table is read again after the samples: a sample counts only if its pid still names
+// the process scanned, so a pid reused by another program is never counted, nor its error
+// taken for the tree's.
+func (t *Tree) treeMemory(marks map[pidStart]bool) (uint64, error) {
+	procs, err := scanProcs()
+	if err != nil {
+		return 0, fmt.Errorf("read the process table: %w", err)
+	}
+	t.mu.Lock()
+	byGroup := t.lost == nil
+	read, readMark := t.readRSS, t.readMark
+	t.mu.Unlock()
+	starts := make(map[int]uint64, len(procs))
+	for _, p := range procs {
+		starts[p.pid] = p.start
+	}
+	seen := make(map[pidStart]bool, len(marks))
+	marked := func(pid int) bool {
+		key := pidStart{pid, starts[pid]}
+		v, ok := marks[key]
+		if !ok {
+			var err error
+			v, err = readMark(pid)
+			if err != nil {
+				// Not known this time: asked again next time, never taken for "no marker".
+				return false
+			}
+			marks[key] = v
+		}
+		seen[key] = true
+		return v
+	}
+	type sample struct {
+		p   proc
+		rss uint64
+		err error
+	}
+	var samples []sample
+	for _, p := range t.members(procs, byGroup, marked) {
+		rss, err := read(p.pid)
+		samples = append(samples, sample{p, rss, err})
+	}
+	for key := range marks {
+		if !seen[key] {
+			delete(marks, key)
+		}
+	}
+	after, err := scanProcs()
+	if err != nil {
+		return 0, fmt.Errorf("read the process table: %w", err)
+	}
+	now := make(map[int]proc, len(after))
+	for _, q := range after {
+		now[q.pid] = q
+	}
+	var total uint64
+	for _, s := range samples {
+		q, ok := now[s.p.pid]
+		if !ok || q.start != s.p.start || q.zombie {
+			// Ended, or the pid names another process now: not the tree's.
+			continue
+		}
+		if s.err != nil {
+			if procEnded(s.err) {
+				continue
+			}
+			return 0, fmt.Errorf("read the memory of process %d: %w", s.p.pid, s.err)
+		}
+		total += s.rss
+	}
+	return total, nil
+}
+
+// procEnded reports whether a read failed because the process has ended.
+func procEnded(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
+// stopWatching ends the watch and waits for it.
+func (t *Tree) stopWatching() {
+	t.stopOnce.Do(func() {
+		if t.stopWatch != nil {
+			close(t.stopWatch)
+			<-t.watchDone
+		}
+	})
+}
+
+func (t *Tree) setMemoryErr(err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.memoryErr == nil {
+		t.memoryErr = err
+	}
+}
+
+// MemoryEnforced reports whether a ceiling was set and is watched here.
+func (t *Tree) MemoryEnforced() bool { return t.enforced }
+
+// FinalMemory is the tree's memory once the command has ended: whether it passed its ceiling,
+// the most resident memory the watch saw it hold (0 when nothing was watched), and why the
+// ceiling could not be watched, when it could not. It stops the watch and waits for it first.
+func (t *Tree) FinalMemory() (exceeded bool, peak uint64, err error) {
+	t.stopWatching()
+	t.mu.Lock()
+	err = t.memoryErr
+	t.mu.Unlock()
+	return t.exceeded.Load(), t.peakSeen.Load(), err
+}
