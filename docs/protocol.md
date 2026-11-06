@@ -59,3 +59,49 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
 
 The binary's own messages go to standard error.
+
+## `adanext-exec check --json`
+
+```
+adanext-exec check --json [--policy FILE | --profile NAME] < request.json
+```
+
+The policy's decision for one command, without running it and without an audit line: for a
+hook that must answer before a tool runs. The policy is chosen as for `run`.
+
+The request is one JSON object on standard input (at most 1 MiB), either an argv (`args`, a
+list of strings, the first not empty) or shell text (`shell`, one of `sh`, `bash`,
+`powershell`, `pwsh` and `cmd`, with its `script`):
+
+```json
+{"version": "adanext-exec/1", "args": ["git", "push", "origin", "main"]}
+{"version": "adanext-exec/1", "shell": "bash", "script": "git push origin main"}
+```
+
+The answer is one JSON line on standard output:
+
+```json
+{"version": "adanext-exec/1", "decision": "ask", "rule": "git-push"}
+```
+
+`decision` is `allow`, `ask` or `refuse`; `rule` names the rule that decided, and is left out
+when the policy's default did. A hook acts on it: `refuse` blocks the tool, `ask` asks the
+person and, on a yes, runs the command with `run --approved RULE`, and `allow` runs it through
+`run`.
+
+When there is no decision, the answer carries `error` instead, and the exit code says why. Every
+outcome but `-h` has its one answer line, a usage error included:
+
+| Code | Meaning |
+|---|---|
+| 0 | A decision. |
+| 121 | The request or the flags are not valid: not one JSON object, an unknown field or a field of the wrong type (a `null` argument included), another version, both an argv and shell text or neither, an empty program name, an unknown shell, more than 1 MiB, or input that could not be read. |
+| 125 | The policy cannot be used. A hook treats this as a refusal. |
+| 126 | No decision: the binary runs elevated (the answer says so), or the answer could not be written. |
+
+## Versions
+
+Every message carries `version`, `adanext-exec/<major>`. A change that an existing client
+could misread (a field removed or given another meaning) is a new major version; a reader
+refuses a version it does not speak, and refuses fields it does not know, so neither side
+guesses. The daemon's messages (M4) join this document under the same version rule.

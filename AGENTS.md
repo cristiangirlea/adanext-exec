@@ -15,7 +15,7 @@ the decisions log; don't reopen a recorded decision.
 |---|---|
 | `broker/` | The public Go SDK. Its API is the project's contract: change it additively. |
 | `internal/` | Platform code (Job Objects, process groups; `tree`), redaction (`redact`), the guard's rules (`guard`), and the binary's subcommands and exit codes (`cli`). |
-| `cmd/adanext-exec/` | The binary's `main`: `run` (M3a); `check` (M3b) and `serve` (M4) to come. |
+| `cmd/adanext-exec/` | The binary's `main`: `run` and `check` (M3); `serve` (M4) to come. |
 | `docs/` | `design.md`, and `protocol.md`: what clients say to the binary. |
 | `.claude/hooks/` | gofmt, push and hidden-character checks; their tests run in CI. |
 
