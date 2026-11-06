@@ -408,7 +408,7 @@ or a sandbox, outside this project's first scope.
    so limits and audit apply to Claude Code's own commands. The text travels as base64, so the
    tool's shell runs the rewrite without reading the command, and `run` hands it to the same
    shell unchanged. When the policy answers ask, the hook answers ask too, shows the person the
-   command, and writes the rewrite with `--approved RULE`; Claude Code runs it only once the
+   command, and writes the rewrite with `--approved=RULE`; Claude Code runs it only once the
    person approves. A command that passes `--approved` or `--script-b64` itself is denied, so an
    agent cannot approve its own ask or hide a script from the hook by going through it. `run` judges the command again; an ask under RULE then runs instead of being
    refused (where no person can be asked, ask means refuse). This rests on the same-user trust

@@ -26,7 +26,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	scriptB64 := flags.String("script-b64", "", "with --shell: the script as URL-safe base64 without padding, instead of an argument after --")
 	policy := flags.String("policy", "", "the policy file (default: the user's adanext-exec/policy.json, else the built-in rules)")
 	profile := flags.String("profile", "", "the policy in the user's adanext-exec/profiles/<name>.json")
-	approved := flags.String("approved", "", "a person approved an ask under this rule; it counts only when the policy answers ask under it")
+	approved := flags.String("approved", "", "a person approved an ask under this rule (empty: the policy's default); it counts only when the policy answers ask under it")
 	audit := flags.String("audit-dir", "", "the audit directory (default: the user's state directory)")
 	timeout := flags.Duration("timeout", 0, "kill the command's tree after this long (0: none)")
 	outputCap := flags.Int("output-cap", 0, "bound each output stream to this many bytes (0: none)")
@@ -97,7 +97,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		p = &broker.Policy{}
 	}
 	c.Policy = p
-	if *approved != "" {
+	approvedSet := false
+	flags.Visit(func(f *flag.Flag) { approvedSet = approvedSet || f.Name == "approved" })
+	if approvedSet {
+		// An empty RULE approves an ask by the policy's default, which names no rule.
 		rule := *approved
 		c.Ask = func(_ context.Context, _ broker.Command, v broker.Verdict) (bool, error) {
 			return v.Rule == rule, nil

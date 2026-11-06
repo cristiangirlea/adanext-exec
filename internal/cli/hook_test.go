@@ -54,20 +54,6 @@ func hookMain(t *testing.T, stdin string, args ...string) (int, *hookDecision, s
 	return code, answer.Specific, errb.String()
 }
 
-// powerShellFor is the PowerShell the tool would use here, or "" when there is none.
-func powerShellFor(t *testing.T) broker.Shell {
-	t.Helper()
-	sh := powerShell()
-	name := string(sh)
-	if sh == broker.ShellPowerShell {
-		name = filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	}
-	if _, err := exec.LookPath(name); err != nil {
-		return ""
-	}
-	return sh
-}
-
 // The rewrite runs a copy of the test binary from a directory whose name needs quoting in both
 // shells, as the binary itself (helper mode "main").
 func useTestBinaryForRewrite(t *testing.T, e env) string {
@@ -93,71 +79,98 @@ func useTestBinaryForRewrite(t *testing.T, e env) string {
 	return exe
 }
 
+// powerShellsHere are the shells the PowerShell tool can use here: pwsh when it is in PATH, and
+// Windows PowerShell on Windows.
+func powerShellsHere() []broker.Shell {
+	var shells []broker.Shell
+	if _, err := exec.LookPath("pwsh"); err == nil {
+		shells = append(shells, broker.ShellPwsh)
+	}
+	if runtime.GOOS == "windows" {
+		ps := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+		if _, err := os.Stat(ps); err == nil {
+			shells = append(shells, broker.ShellPowerShell)
+		}
+	}
+	return shells
+}
+
 // For each decision and each tool the hook answers as Claude Code reads it, and the rewrite,
-// run through the tool's own shell, runs the exact original text: an allow and an ask (whose
-// rewrite carries the approval) run it, a refusal denies naming its rule.
+// run through the tool's own shell, runs the exact original text: an allow and an ask, under a
+// rule or the policy's default (whose rewrite carries the approval), run it; a refusal denies
+// naming its rule.
 func TestTheHookRewriteRunsTheExactText(t *testing.T) {
 	e := setup(t)
 	useTestBinaryForRewrite(t, e)
-	policy := e.writePolicy(t, "hook.json", `{"version": 1, "rules": [{"name": "say-hi", "match": "say-hi", "decision": "ask"}]}`)
+	named := e.writePolicy(t, "hook.json", `{"version": 1, "rules": [{"name": "say-hi", "match": "say-hi", "decision": "ask"}]}`)
+	byDefault := e.writePolicy(t, "default-ask.json", `{"version": 1, "default": "ask"}`)
 	tab, backslash := string(rune(9)), string(rune(92))
 	type tool struct {
-		name   string
-		shell  broker.Shell
-		script string
-		want   string
+		name                 string
+		shell                broker.Shell
+		script, mark, output string
 	}
 	tools := []tool{{
 		"Bash", broker.ShellBash,
 		`x='a  b'; printf '[%s]' "$x" $'c\td' "$(echo $((2+3)))"; echo " \"q\" \\ done" | tr d D`,
-		"[a  b][c" + tab + "d][5] \"q\" " + backslash + " Done\n",
+		"echo say-hi >/dev/null; ",
+		"[a  b][c" + tab + "d][5] \"q\" " + backslash + " Done" + nl,
 	}}
-	if sh := powerShellFor(t); sh != "" {
+	for _, sh := range powerShellsHere() {
 		tools = append(tools, tool{
 			"PowerShell", sh,
 			`$x = 'a;b|c'; Write-Output "$x $(1+2) ""q"" 'r' ` + "`$y" + `"; 1..3 | ForEach-Object { $_ * 2 }`,
-			"a;b|c 3 \"q\" 'r' $y\n2\n4\n6\n",
+			"$null = 'say-hi'; ",
+			"a;b|c 3 \"q\" 'r' $y" + nl + "2" + nl + "4" + nl + "6" + nl,
 		})
-	} else {
+	}
+	if len(tools) == 1 {
 		t.Log("no PowerShell here; the PowerShell tool's rewrite is not run")
 	}
+	old := lookPath
+	t.Cleanup(func() { lookPath = old })
 	for _, tl := range tools {
+		// The PowerShell tool takes pwsh when it is in PATH: this one is chosen.
+		lookPath = func(string) (string, error) {
+			if tl.shell == broker.ShellPwsh {
+				return "pwsh", nil
+			}
+			return "", exec.ErrNotFound
+		}
 		for _, tc := range []struct {
-			prefix, decision, rule string
-		}{{"", "allow", ""}, {"echo say-hi >/dev/null; ", "ask", "say-hi"}} {
-			script := tc.prefix + tl.script
-			if tl.name == "PowerShell" && tc.prefix != "" {
-				script = "$null = 'say-hi'; " + tl.script
+			name, policy, mark, rule string
+		}{{"allow", named, "", ""}, {"ask", named, tl.mark, "say-hi"}, {"default ask", byDefault, "", ""}} {
+			script := tc.mark + tl.script
+			decision := strings.Fields(tc.name)[len(strings.Fields(tc.name))-1]
+			in := map[string]any{"command": script, "description": "d", "timeout": 5000, "run_in_background": false}
+			code, d, stderr := hookMain(t, hookRequest(t, tl.name, in), "claude-code", "--policy", tc.policy)
+			if code != 0 || d == nil || d.Decision != decision {
+				t.Fatalf("%s %s %s: code %d, answer %+v, stderr %q", tl.name, tl.shell, tc.name, code, d, stderr)
 			}
-			in := map[string]any{"command": script, "description": "d", "timeout": 5000}
-			code, d, stderr := hookMain(t, hookRequest(t, tl.name, in), "claude-code", "--policy", policy)
-			if code != 0 || d == nil || d.Decision != tc.decision {
-				t.Fatalf("%s %s: code %d, answer %+v, stderr %q", tl.name, tc.decision, code, d, stderr)
+			if tc.rule != "" && !strings.Contains(d.Reason, tc.rule) || decision == "ask" && !strings.Contains(d.Reason, script) {
+				t.Errorf("%s %s: reason %q, want the rule and the command", tl.name, tc.name, d.Reason)
 			}
-			if tc.rule != "" && !strings.Contains(d.Reason, tc.rule) || tc.decision == "ask" && !strings.Contains(d.Reason, script) {
-				t.Errorf("%s %s: reason %q, want the rule and the command", tl.name, tc.decision, d.Reason)
-			}
-			if string(d.Input["description"]) != `"d"` || string(d.Input["timeout"]) != "5000" || len(d.Input) != 3 {
+			if string(d.Input["description"]) != `"d"` || string(d.Input["timeout"]) != "5000" || string(d.Input["run_in_background"]) != "false" || len(d.Input) != 4 {
 				t.Errorf("%s: updatedInput %v, want the other fields kept", tl.name, d.Input)
 			}
 			var rewrite string
 			if err := json.Unmarshal(d.Input["command"], &rewrite); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(rewrite, "say-hi >") || strings.Contains(rewrite, "printf") {
-				t.Errorf("%s: the rewrite %q carries the text where a shell reads it", tl.name, rewrite)
+			if !strings.Contains(rewrite, "'run' '--shell' '"+string(tl.shell)+"'") || tc.mark != "" && strings.Contains(rewrite, tc.mark) || strings.Contains(rewrite, "Write-Output") || strings.Contains(rewrite, "printf") {
+				t.Errorf("%s: the rewrite %q runs another shell, or carries the text where a shell reads it", tl.name, rewrite)
 			}
 			// Claude Code's tool runs the rewrite through its shell; here, run does.
 			code, stdout, stderr := main(t, context.Background(), "", "", "run", "--shell", string(tl.shell), "--", rewrite)
-			stdout = strings.ReplaceAll(stdout, "\r\n", "\n")
-			if code != 0 || stdout != tl.want {
-				t.Errorf("%s %s: the rewrite exits %d with %q, stderr %q; want 0 and %q", tl.name, tc.decision, code, stdout, stderr, tl.want)
+			stdout = strings.ReplaceAll(stdout, string(rune(13))+nl, nl)
+			if code != 0 || stdout != tl.output {
+				t.Errorf("%s %s %s: the rewrite exits %d with %q, stderr %q; want 0 and %q", tl.name, tl.shell, tc.name, code, stdout, stderr, tl.output)
 			}
 		}
-	}
-	code, d, _ := hookMain(t, hookRequest(t, "Bash", map[string]any{"command": "git push origin main"}), "claude-code")
-	if code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, "git-push") || d.Input != nil {
-		t.Errorf("a refused command: code %d, answer %+v; want a deny naming git-push", code, d)
+		code, d, _ := hookMain(t, hookRequest(t, tl.name, map[string]any{"command": "git push origin main"}), "claude-code")
+		if code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, "git-push") || d.Input != nil {
+			t.Errorf("%s: a refused command: code %d, answer %+v; want a deny naming git-push", tl.name, code, d)
+		}
 	}
 }
 
@@ -174,7 +187,7 @@ func TestTheRewriteCarriesThePolicyAndTheCaller(t *testing.T) {
 	if d == nil || json.Unmarshal(d.Input["command"], &rewrite) != nil {
 		t.Fatalf("answer %+v", d)
 	}
-	want := `'/bin/adanext-exec' 'run' '--shell' 'bash' '--profile' 'ci' '--approved' 'say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
+	want := `'/bin/adanext-exec' 'run' '--shell' 'bash' '--profile' 'ci' '--approved=say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
 	if rewrite != want {
 		t.Errorf("rewrite %s\nwant    %s", rewrite, want)
 	}
@@ -229,6 +242,7 @@ func TestTheHookDeniesWhatItCannotJudge(t *testing.T) {
 		{"an argument", bash("ls"), []string{"extra"}, "the hook's arguments"},
 		{"self-approval", bash("adanext-exec run --approved git-push -- git push"), nil, "-approved"},
 		{"a hidden script", bash("x run --shell bash -script-b64 Z2l0IHB1c2g"), nil, "-script-b64"},
+		{"a session id with quotes", strings.Replace(bash("ls"), "5f1c-session", `a \"b --timeout 1ns --session \"d`, 1), nil, "session id"},
 	} {
 		args := append([]string{"claude-code"}, tc.args...)
 		code, d, _ := hookMain(t, tc.stdin, args...)
@@ -245,6 +259,49 @@ func TestTheHookDeniesWhatItCannotJudge(t *testing.T) {
 	defer func() { isElevated = func() bool { return false } }()
 	if code, d, _ := hookMain(t, bash("ls"), "claude-code"); code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, errElevated) {
 		t.Errorf("elevated: code %d, answer %+v; want a deny", code, d)
+	}
+}
+
+type brokenReader struct{}
+
+func (brokenReader) Read([]byte) (int, error) { return 0, errors.New("gone") }
+
+// Input that cannot be read, and a binary that cannot be found for the rewrite, deny.
+func TestTheHookDeniesWhenItCannotReadOrRewrite(t *testing.T) {
+	setup(t)
+	var out, errb bytes.Buffer
+	if code := Main(context.Background(), []string{"hook", "claude-code"}, brokenReader{}, &out, &errb); code != 0 || !strings.Contains(out.String(), `"deny"`) || !strings.Contains(out.String(), "gone") {
+		t.Errorf("unreadable input: code %d, answer %q", code, out.String())
+	}
+	old := hookExecutable
+	t.Cleanup(func() { hookExecutable = old })
+	hookExecutable = func() (string, error) { return "", errors.New("no path") }
+	code, d, _ := hookMain(t, hookRequest(t, "Bash", map[string]any{"command": "ls"}), "claude-code")
+	if code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, "no path") || d.Input != nil {
+		t.Errorf("no binary: code %d, answer %+v; want a deny", code, d)
+	}
+}
+
+// An empty --approved approves an ask by the policy's default, which names no rule, and only that.
+func TestAnEmptyApprovalCountsOnlyForTheDefaultsAsk(t *testing.T) {
+	e := setup(t)
+	byDefault := e.writePolicy(t, "default-ask.json", `{"version": 1, "default": "ask"}`)
+	named := e.writePolicy(t, "ask.json", askHelper)
+	for _, tc := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"run", "--policy", byDefault, "--approved=", "--"}, 0},
+		{[]string{"run", "--policy", byDefault, "--approved", "", "--"}, 0},
+		{[]string{"run", "--policy", byDefault, "--approved=helper", "--"}, ExitRefused},
+		{[]string{"run", "--policy", byDefault, "--"}, ExitRefused},
+		{[]string{"run", "--policy", named, "--approved=", "--"}, ExitRefused},
+	} {
+		os.Remove(e.marker)
+		code, _, stderr := main(t, context.Background(), "", "touch", tc.args...)
+		if code != tc.code || e.ran() != (tc.code == 0) {
+			t.Errorf("%q: code %d, ran %v, stderr %q; want %d", tc.args, code, e.ran(), stderr, tc.code)
+		}
 	}
 }
 

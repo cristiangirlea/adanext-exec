@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -42,6 +43,11 @@ type hookDecision struct {
 // The flags only a rewrite may carry: an approval, and a script the policy cannot read. A
 // command that passes them itself could approve its own ask, or hide a script from the hook.
 var rewriteOnlyFlags = []string{"-approved", "-script-b64"}
+
+// sessionID is the form of a session id the rewrite carries. Windows PowerShell passes a
+// native argument's double quotes through to the program's own parser, so anything else could
+// add flags to the rewrite.
+var sessionID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // hookExecutable is the binary the rewrite runs; tests replace it.
 var hookExecutable = os.Executable
@@ -101,6 +107,9 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return deny(fmt.Sprintf("the command passes %s itself; only the hook's rewrite carries it", f))
 		}
 	}
+	if in.Session != "" && !sessionID.MatchString(in.Session) {
+		return deny("the session id is not letters, digits and . _ : -")
+	}
 	if *policy != "" {
 		// The command may run in another directory than the hook.
 		if *policy, err = filepath.Abs(*policy); err != nil {
@@ -122,7 +131,11 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case broker.Ask:
 		// The rewrite hides the text, so the reason shows the person what they approve.
 		answer.Decision = "ask"
-		answer.Reason = fmt.Sprintf("adanext-exec asks under rule %q. The command:\n%s", v.Rule, command)
+		under := fmt.Sprintf("under rule %q", v.Rule)
+		if v.Rule == "" {
+			under = "by the policy's default"
+		}
+		answer.Reason = fmt.Sprintf("adanext-exec asks %s. The command:\n%s", under, command)
 	default:
 		answer.Decision = "allow"
 		answer.Reason = "adanext-exec allows it; it runs through adanext-exec run"
@@ -139,7 +152,8 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		argv = append(argv, "--profile", *profile)
 	}
 	if v.Decision == broker.Ask {
-		argv = append(argv, "--approved", v.Rule)
+		// One word even for the default's empty rule: Windows PowerShell drops an empty argument.
+		argv = append(argv, "--approved="+v.Rule)
 	}
 	argv = append(argv, "--agent", "claude-code")
 	if in.Session != "" {

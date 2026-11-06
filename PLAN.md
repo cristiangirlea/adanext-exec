@@ -78,7 +78,10 @@ Newest first.
   in PATH, else Windows PowerShell. A command that passes `-approved` or `-script-b64` itself is
   denied: through the hook an agent could otherwise approve its own ask or hide a script from
   the policy. Every failure is a deny, or exit 2, since Claude Code runs the command as it is
-  when a hook gives no answer or fails another way.
+  when a hook gives no answer or fails another way. An empty `--approved=` now approves an ask
+  by the policy's default, which names no rule, so such an ask can run once approved. The
+  session id must be a plain id, since Windows PowerShell hands a native argument's quotes to
+  the program's own parser.
 - 2026-11-07: M5b (PR #55, #51). Linux and macOS watch the tree's resident memory every 100 ms
   and kill it past the ceiling: best effort, and written so. The watch counts what the kill
   reaches (the group, marked processes, their descendants), reading each process's marker once,
