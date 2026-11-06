@@ -11,11 +11,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 - [ ] **M1: one command, contained.** `broker.Run` with a timeout, a whole-tree kill, an output
   cap and an audit line, on Windows (Job Objects), Linux and macOS (process groups). Done when
   M1a to M1d are.
-  - [ ] **M1a: run and kill the tree.** `broker.Run` takes argv or shell text with a named shell
+  - [x] **M1a: run and kill the tree.** `broker.Run` takes argv or shell text with a named shell
     (#4), stops at a timeout or a cancelled context, and kills the whole tree, also what is left
     when the command exits: a Job Object on Windows (from harness), a process group on Linux and
     macOS. Refuses batch files as argv on Windows (#18); the job never allows breakaway and
-    nests (#19).
+    nests (#19). Done: PR #27, 2026-11-06.
   - [ ] **M1b: what leaves the group on Unix.** Kill descendants that called `setsid` (#10) and
     the group when the caller dies (#11), or say where it cannot.
   - [ ] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
@@ -45,6 +45,18 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M1a (PR #27). `broker.Run` also kills what a command leaves running when its own
+  process exits, on every platform, so nothing a command starts outlives it; the design said
+  only "when it must stop". A job that cannot be made or assigned refuses the command
+  (`ErrNotContained`) instead of harness's taskkill fallback, since the broker fails closed. An
+  argv naming `cmd.exe`, also through a link, is refused like a batch file (#18), as cmd.exe
+  reparses it the same way. `bash` on Windows passes over WSL's launchers, whose Linux processes
+  no job holds. Run owns the pipes: it waits for the caller's writes but not for a blocked stdin
+  reader, and abandons, and reports, output held open from outside the tree.
+  On Unix the leader is waited for with `waitid(WNOWAIT)` before the group is killed, so the
+  group id cannot be reused in between. The SDK leaves console groups alone (#19): reporting
+  after Ctrl+C is the caller's, and `adanext-exec run` does it in M3. PowerShell text goes
+  through `-Command`; passing it without a reparse stays with #5 (M6).
 - 2026-11-06: M1 and M4 split into smaller milestones (#22). M1 into running with a timeout and
   the tree kill on every platform (M1a), what leaves the group on Unix (M1b), the output cap
   (M1c) and the audit (M1d); M4 into the protocol, the daemon with its leases, and the
