@@ -21,16 +21,18 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   - [ ] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
     buffer does.
   - [ ] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
-    and what the audit and the broker do not cover said in the design (#13).
+    and what the audit and the broker do not cover said in the design (#13). The patterns are
+    the audit's own until M2's policy brings its secret list, which then shares them.
 - [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
   tests.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`).
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
-  - [ ] **M4a: the protocol** between client and daemon (`docs/protocol.md`).
+  - [ ] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
+    in `docs/protocol.md`.
   - [ ] **M4b: the daemon and leases.** `serve`, its lifecycle, slots held as leases on the client
-    connection (#9, #16).
+    connection (#9, #16), and what the Windows socket does not protect (#17).
   - [ ] **M4c: classification.** Which commands are heavy, configurable, and their fair share
     (#15).
 - [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Windows
@@ -47,6 +49,7 @@ Newest first.
   the tree kill on every platform (M1a), what leaves the group on Unix (M1b), the output cap
   (M1c) and the audit (M1d); M4 into the protocol, the daemon with its leases, and the
   classification. Each sub-milestone is one issue, branch and PR, ticked here when it merges.
+  PR #26.
 - 2026-10-14: the repository (M0). Decided by the owner: the name `adanext-exec` (an AdaNext
   tool), public (everything AdaNext OS or harness uses is public), MIT, CI on GitHub's hosted
   runners, protected by rulesets on `main` and `v*` tags. Go, standard library only, so harness
