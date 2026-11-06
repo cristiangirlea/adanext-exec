@@ -48,11 +48,31 @@ func TestTheSocketDirectoryIsMadeOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := daclOf(t, dir)
-	if !strings.HasPrefix(got, "D:P") || strings.Count(got, "(") != 3 ||
-		!strings.Contains(got, ";;;"+me+")") || !strings.Contains(got, ";;;SY)") || !strings.Contains(got, ";;;BA)") {
-		t.Errorf("access list %s (it was %s), want a protected list for %s, SYSTEM and Administrators only", got, before, me)
+	// The expected list goes through the same conversion, so a SID Windows writes by its alias
+	// (LA for the built-in administrator, say) compares equal; AI, the auto-inherit mark
+	// SetNamedSecurityInfo adds, is not part of what the list allows.
+	want := canonicalDACL(t, "D:P(A;OICI;FA;;;"+me+")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	got := strings.Replace(daclOf(t, dir), "D:PAI", "D:P", 1)
+	if got != want {
+		t.Errorf("access list %s (it was %s), want %s: protected, for %s, SYSTEM and Administrators only", got, before, want, me)
 	}
+}
+
+// canonicalDACL writes an SDDL access list as Windows writes it back.
+func canonicalDACL(t *testing.T, sddl string) string {
+	t.Helper()
+	p, _ := syscall.UTF16PtrFromString(sddl)
+	var sd uintptr
+	if r, _, e := procConvertSDDL.Call(uintptr(unsafe.Pointer(p)), sddlRevision1, uintptr(unsafe.Pointer(&sd)), 0); r == 0 {
+		t.Fatalf("read %s: %v", sddl, e)
+	}
+	defer procLocalFree.Call(sd)
+	var str *uint16
+	if r, _, e := procSDToString.Call(sd, sddlRevision1, daclSecurityInformation, uintptr(unsafe.Pointer(&str)), 0); r == 0 {
+		t.Fatalf("write %s back: %v", sddl, e)
+	}
+	defer procLocalFree.Call(uintptr(unsafe.Pointer(str)))
+	return syscall.UTF16ToString(unsafe.Slice(str, 4096))
 }
 
 func TestTheSocketsOwnerIsTheUser(t *testing.T) {
