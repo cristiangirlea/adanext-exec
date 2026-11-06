@@ -30,25 +30,20 @@ func TestATreeOverItsMemoryCeilingIsStopped(t *testing.T) {
 		res, err := Run(context.Background(), c)
 		took := time.Since(start)
 		lines := readAudit(t, c.Audit.Dir)
-		if runtime.GOOS != "windows" {
-			// Not enforced here yet: it says so, and the command runs as it would.
-			if err != nil || res.MemoryEnforced || res.MemoryExceeded || res.ExitCode != 0 {
-				t.Errorf("%s: %+v, %v; want it run, the ceiling not enforced", mode, res, err)
-			}
-			if lines[0]["memory_enforced"] != false || lines[0]["memory_limit"] != float64(128*mib) {
-				t.Errorf("%s: audit %v, want the ceiling recorded as not enforced", mode, lines[0])
-			}
-			continue
-		}
 		if err != nil || !res.MemoryEnforced || !res.MemoryExceeded || res.ExitCode != -1 {
 			t.Errorf("%s: %+v, %v; want it stopped at its ceiling", mode, res, err)
 		}
 		if took > 30*time.Second {
 			t.Errorf("%s: stopping took %v", mode, took)
 		}
-		// The job's accounting is by commit, not byte: it may stand a little over the ceiling
-		// at the moment it stops the tree.
-		if res.PeakMemory <= 0 || res.PeakMemory > 132*mib {
+		// Windows counts commits, and stands a little over the ceiling when it stops the tree;
+		// the watch elsewhere reads resident memory every 100 ms, and can see it a read's growth
+		// past it.
+		most := int64(132 * mib)
+		if runtime.GOOS != "windows" {
+			most = 512 * mib
+		}
+		if res.PeakMemory <= 0 || res.PeakMemory > most {
 			t.Errorf("%s: peak memory %d, want some, and not much over the ceiling", mode, res.PeakMemory)
 		}
 		if peak, _ := lines[0]["peak_memory"].(float64); int64(peak) != res.PeakMemory {
@@ -68,7 +63,7 @@ func TestATreeUnderItsCeilingRuns(t *testing.T) {
 	if err != nil || res.ExitCode != 0 || res.MemoryExceeded {
 		t.Fatalf("%+v, %v; want it run to its end", res, err)
 	}
-	if runtime.GOOS == "windows" && (!res.MemoryEnforced || res.PeakMemory < 32*mib) {
+	if !res.MemoryEnforced || res.PeakMemory < 32*mib {
 		t.Errorf("%+v; want the ceiling enforced and a peak of at least 32 MiB", res)
 	}
 }

@@ -52,7 +52,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   - [x] **M5a: the ceiling and Windows** (#50). `Command.MemoryLimit`, `run --memory`, exit 122,
     the audit fields, and Windows' hard ceiling through the Job Object; the other platforms say
     not enforced. Done: PR #54, 2026-11-07.
-  - [ ] **M5b: the watchdog** (#51). Polling the tree's memory on Linux and macOS.
+  - [x] **M5b: the watchdog** (#51). Polling the tree's memory on Linux and macOS. Done: PR #55,
+    2026-11-07.
   - [ ] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
     delegated.
 - [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell.
@@ -63,6 +64,12 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M5b (PR #55, #51). Linux and macOS watch the tree's resident memory every 100 ms
+  and kill it past the ceiling: best effort, and written so. The watch counts what the kill
+  reaches (the group, marked processes, their descendants), reading each process's marker once,
+  and counts a sample only if its pid still names the process scanned. It ends before the
+  leader is reaped, while the group id is still the tree's. A memory that cannot be read stops
+  the tree (fail closed) and is reported.
 - 2026-11-07: M5 split into the ceiling and Windows (M5a), the watchdog on Linux and macOS
   (M5b) and a delegated cgroup on Linux (M5c), one issue and PR each. M5a (PR #54, #50): a
   limit a platform does not enforce is reported in the result, the audit and the binary, and
