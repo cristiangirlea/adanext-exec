@@ -188,6 +188,9 @@ Across commands (daemon):
   `npm test`, `npm run build`, `gradle`, `make`, test runners; configurable). At most N heavy
   commands run at once on the machine (default: CPU count / 4, at least 1); the rest wait in a
   fair queue, oldest first, with the wait shown to the caller. Light commands never wait.
+  A slot is a lease on the client's connection to the daemon (M4a, #9): closing the connection,
+  for any reason, releases it, so the daemon never has to tell processes apart.
+  [protocol.md](protocol.md) has the messages.
 
 ## How it controls processes, per platform
 
@@ -197,7 +200,6 @@ Across commands (daemon):
 | Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`, with its completion-port notice so the command is stopped, not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
 | Memory ceiling (portable, best effort: a short spike between polls can pass) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
-| Process identity (who holds a slot) | creation time (`GetProcessTimes`) | start ticks (`/proc/<pid>/stat`) | start time from `kern.proc.pid` (to verify with the standard library) |
 
 On Windows the job allows no breakaway (no `JOB_OBJECT_LIMIT_BREAKAWAY_OK` or its silent
 form), and jobs nest (Windows 8 and later), so a caller that is itself in a job still contains
