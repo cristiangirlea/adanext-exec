@@ -19,6 +19,12 @@ func TestHelperTree(t *testing.T) {
 		os.Exit(0)
 	case "exit":
 		os.Exit(0)
+	case "fork":
+		// Leaves a child in the group and exits.
+		if err := helperCmd("sleep").Start(); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
 	default:
 		helperPlatform(os.Getenv(helperEnv))
 	}
