@@ -65,6 +65,12 @@ type Command struct {
 	// not Timeout. Its Command has its own copies of Args and Env, so changing them changes
 	// nothing that runs; Stdin, Stdout and Stderr are the caller's own and are not to be used.
 	Ask func(ctx context.Context, c Command, v Verdict) (bool, error)
+	// MemoryLimit is a ceiling, in bytes, on the memory of the command and everything it
+	// starts, together; zero means none. A tree that goes over it is stopped
+	// (Result.MemoryExceeded). Where the platform cannot enforce it, the command runs without
+	// it and Result.MemoryEnforced says so; docs/design.md lists the platforms.
+	MemoryLimit int64
+
 	// Slots, when set, makes Run wait for one of the daemon's heavy-command slots before the
 	// command starts, and hold it until the command has ended. Nil shares no limits.
 	Slots *Slots
@@ -111,6 +117,9 @@ func (c Command) cmd() (*exec.Cmd, error) {
 	}
 	if c.OutputCap < 0 {
 		return nil, invalid("a negative output cap")
+	}
+	if c.MemoryLimit < 0 {
+		return nil, invalid("a negative memory limit")
 	}
 	var cmd *exec.Cmd
 	switch {

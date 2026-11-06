@@ -49,6 +49,18 @@ func helperMain(mode string) {
 		os.Stdout.Write(bytes.Repeat([]byte("x"), n))
 	case "signal":
 		helperSignal()
+	case "alloc":
+		// Takes and touches 512 MiB, then waits.
+		var held [][]byte
+		for range 512 {
+			b := make([]byte, 1<<20)
+			for i := 0; i < len(b); i += 4096 {
+				b[i] = 1
+			}
+			held = append(held, b)
+		}
+		fmt.Fprint(os.Stdout, len(held))
+		time.Sleep(2 * time.Second)
 	case "hints":
 		// The parallelism hints a slot brings, as the command sees them.
 		for _, k := range []string{"GOFLAGS", "GOMAXPROCS", "MAKEFLAGS", "CARGO_BUILD_JOBS"} {

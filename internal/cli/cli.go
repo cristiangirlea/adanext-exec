@@ -17,7 +17,7 @@ const (
 	ExitBrokerFailed = 120
 	// ExitUsage: the arguments are not valid.
 	ExitUsage = 121
-	// ExitMemory is reserved for the memory ceiling (M5).
+	// ExitMemory: the command went over its memory ceiling (--memory), and its tree was stopped.
 	ExitMemory = 122
 	// ExitNoDaemon: the command asked for a heavy-command slot and no daemon answered, or the
 	// daemon went away while the command held its slot, and the command was killed.

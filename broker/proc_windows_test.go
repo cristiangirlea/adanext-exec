@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -101,7 +102,20 @@ func TestRunRefusesABatchFileAsArgv(t *testing.T) {
 	}
 }
 
-func helperPlatform(string) {}
+var procVirtualAlloc = syscall.NewLazyDLL("kernel32.dll").NewProc("VirtualAlloc")
+
+func helperPlatform(mode string) {
+	if mode != "alloc-survive" {
+		return
+	}
+	// Commits 64 MiB at a time and goes on when an allocation is refused, as a program that
+	// checks its allocations would: only the broker's watch can stop it.
+	for range 600 {
+		procVirtualAlloc.Call(0, 64<<20, 0x3000, 0x04)
+		time.Sleep(100 * time.Millisecond)
+	}
+	os.Exit(0)
+}
 
 func TestRunRefusesCmdExeUnderAnotherName(t *testing.T) {
 	sys, err := systemDir()
@@ -210,4 +224,20 @@ func TestIsWSLLauncherSeesAStoreAlias(t *testing.T) {
 
 func callerDeath() (leaderDies, childDies bool, why string) {
 	return true, true, "Windows: the job closes with its caller and kills the whole tree"
+}
+
+// A program that goes on after its allocations are refused is still stopped at its ceiling: the
+// broker reads the job's memory itself, without waiting for a notice Windows may not send.
+func TestAProgramThatSurvivesARefusedAllocationIsStopped(t *testing.T) {
+	c := helper("alloc-survive")
+	c.MemoryLimit = 160 << 20
+	c.Timeout = time.Minute
+	start := time.Now()
+	res, err := Run(context.Background(), c)
+	if err != nil || !res.MemoryExceeded || !res.MemoryEnforced {
+		t.Fatalf("%+v, %v; want it stopped at its ceiling", res, err)
+	}
+	if took := time.Since(start); took > 20*time.Second {
+		t.Errorf("it ran %v; the watch did not stop it", took)
+	}
 }

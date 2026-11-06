@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -31,12 +32,14 @@ const (
 	// Only this flag is set: never JOB_OBJECT_LIMIT_BREAKAWAY_OK (0x800) or
 	// JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK (0x1000), so no descendant can leave the job.
 	jobObjectLimitKillOnJobClose = 0x2000
-	processTerminate             = 0x0001
-	processSetQuota              = 0x0100
-	synchronize                  = 0x00100000
-	createSuspended              = 0x0004
-	snapThread                   = 0x0004
-	threadSuspendResume          = 0x0002
+	// jobObjectLimitJobMemory caps the committed memory of every process in the job together.
+	jobObjectLimitJobMemory = 0x0200
+	processTerminate        = 0x0001
+	processSetQuota         = 0x0100
+	synchronize             = 0x00100000
+	createSuspended         = 0x0004
+	snapThread              = 0x0004
+	threadSuspendResume     = 0x0002
 )
 
 type jobObjectBasicLimitInformation struct {
@@ -73,27 +76,50 @@ type jobObjectBasicAccountingInformation struct {
 
 // Tree is a started command and the kill-on-close job that holds it and its descendants.
 type Tree struct {
-	mu      sync.Mutex
-	job     syscall.Handle
-	process syscall.Handle
+	mu        sync.Mutex
+	job       syscall.Handle
+	process   syscall.Handle
+	limit     uint64
+	exceeded  atomic.Bool
+	stopWatch chan struct{}
+	watchDone chan struct{}
+	stopOnce  sync.Once
+	memoryErr error
+	// readPeak reads the job's peak memory; tests replace it.
+	readPeak func() (uint64, error)
 }
 
 // Start starts cmd suspended, assigns it to a new kill-on-close job and only then lets it run,
 // so nothing it starts can be outside the job. Jobs nest (Windows 8 and later), so this works
 // when the caller is itself in a job. When the job cannot be made or assigned, the suspended
 // process is killed and Start returns ErrNotContained.
-func Start(cmd *exec.Cmd) (*Tree, error) {
+func Start(cmd *exec.Cmd) (*Tree, error) { return StartLimited(cmd, 0) }
+
+// StartLimited is Start with a ceiling on the committed memory of the whole tree, in bytes; 0
+// is none. The job enforces it: an allocation past it fails, and the watch (watchMemory) then
+// kills the tree, so the command is stopped, not left to run on with failing allocations.
+func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) {
 	h, _, err := procCreateJobObjectW.Call(0, 0)
 	if h == 0 {
 		return nil, fmt.Errorf("%w: create a job object: %v", ErrNotContained, err)
 	}
-	t := &Tree{job: syscall.Handle(h)}
+	if !limitFits(memoryLimit, uint64(^uintptr(0))) {
+		syscall.CloseHandle(syscall.Handle(h))
+		return nil, errLimitTooLarge(memoryLimit)
+	}
+	t := &Tree{job: syscall.Handle(h), limit: memoryLimit}
+	t.readPeak = t.queryPeak
 	var info jobObjectExtendedLimitInformation
 	info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
+	if memoryLimit > 0 {
+		info.BasicLimitInformation.LimitFlags |= jobObjectLimitJobMemory
+		info.JobMemoryLimit = uintptr(memoryLimit)
+	}
 	if ok, _, err := procSetInformationJobObject.Call(h, jobObjectExtendedLimitInformationClass, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); ok == 0 {
 		t.Close()
 		return nil, fmt.Errorf("%w: set the job's limits: %v", ErrNotContained, err)
 	}
+
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -119,6 +145,9 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	}
 	if err := resumeThreads(uint32(cmd.Process.Pid), resumeThread); err != nil {
 		return fail(err)
+	}
+	if memoryLimit > 0 {
+		t.watchMemory()
 	}
 	return t, nil
 }
@@ -228,6 +257,7 @@ func (t *Tree) limitFlags() (uint32, error) {
 
 // Close releases the job; Windows then kills whatever is still in it.
 func (t *Tree) Close() {
+	t.stopWatching()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.job != 0 {

@@ -132,7 +132,7 @@ type auditRecord struct {
 	Args       []string `json:"args,omitempty"`
 	Shell      string   `json:"shell,omitempty"`
 	Script     string   `json:"script,omitempty"`
-	Outcome    string   `json:"outcome"`            // exited, signalled, timed out, cancelled, refused, not run
+	Outcome    string   `json:"outcome"`            // exited, signalled, timed out, cancelled, over its memory ceiling, refused, not run
 	Decision   Decision `json:"decision,omitempty"` // the policy's, when there is one
 	Rule       string   `json:"rule,omitempty"`     // the rule that decided, when one did
 	Approved   *bool    `json:"approved,omitempty"` // a person's answer, when one was asked
@@ -141,6 +141,9 @@ type auditRecord struct {
 	DurationMS int64    `json:"duration_ms"`
 	OutputCut  int64    `json:"output_cut,omitempty"`
 	QueueWait  int64    `json:"queue_wait_ms,omitempty"` // the wait for a heavy-command slot
+	MemoryMax  int64    `json:"memory_limit,omitempty"`  // the ceiling asked for
+	Enforced   *bool    `json:"memory_enforced,omitempty"`
+	PeakMemory int64    `json:"peak_memory,omitempty"`
 	Error      string   `json:"error,omitempty"`
 }
 
@@ -161,6 +164,7 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 		DurationMS: res.Duration.Milliseconds(),
 		OutputCut:  res.OutputCut,
 		QueueWait:  res.Waited.Milliseconds(),
+		PeakMemory: res.PeakMemory,
 	}
 	for i, a := range c.Args {
 		if i > 0 && takesSecret(c.Args[i-1]) {
@@ -189,6 +193,8 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 		rec.Outcome = "timed out"
 	case res.Canceled:
 		rec.Outcome = "cancelled"
+	case res.MemoryExceeded:
+		rec.Outcome = "over its memory ceiling"
 	case res.Signal != "":
 		rec.Outcome = "signalled"
 	default:
@@ -198,6 +204,13 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 		code := res.ExitCode
 		rec.ExitCode = &code
 		rec.Signal = res.Signal
+	}
+	if c.MemoryLimit > 0 {
+		rec.MemoryMax = c.MemoryLimit
+		if ran {
+			enforced := res.MemoryEnforced
+			rec.Enforced = &enforced
+		}
 	}
 	return rec
 }
