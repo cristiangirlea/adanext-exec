@@ -24,13 +24,14 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     and what the audit and the broker do not cover said in the design (#13). The patterns are
     the audit's own until M2's policy brings its secret list, which then shares them. Done:
     PR #35, 2026-11-06.
-- [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
+- [x] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
   tests. Done when M2a to M2c are.
   - [x] **M2a: the guard** (#36). harness's command guard in `internal/guard`, with its tests.
     Done: PR #39, 2026-11-06.
   - [x] **M2b: the policy** (#37). The JSON rules, the decisions, `Run` keeping to them, the
     audit outcome, and the trust statement (#21). Done: PR #40, 2026-11-06.
-  - [ ] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
+  - [x] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
+    Done: PR #41, 2026-11-06.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`).
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
@@ -51,6 +52,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M2c (PR #41, #20), which completes M2. `Command.Ask` puts an ask to a person
+  before the command starts: yes runs it, no refuses it, an error leaves it not run, and none
+  set refuses as before. A refusal is never asked about, so a person cannot overrule one. The
+  wait counts against the caller's context, not the command's timeout. The binary's
+  `--approved RULE` (M3) answers through the same callback.
 - 2026-11-06: M2b (PR #40, #21). A command meeting several rules gets the strictest decision,
   and a built-in rule is lifted only by naming it, so a policy's own `allow` cannot undo a
   refusal it did not mean to; `default: refuse` makes a list of what may run. An argv is matched
