@@ -198,3 +198,48 @@ func TestRunStopsWritingAStreamOnceItsWriterFails(t *testing.T) {
 		t.Fatalf("OutputCut %d, want 13200", res.OutputCut)
 	}
 }
+
+// signalWriter tells when its first bytes arrive.
+type signalWriter struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	first chan struct{}
+}
+
+func (w *signalWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.buf.Len() == 0 {
+		close(w.first)
+	}
+	return w.buf.Write(p)
+}
+
+func TestRunPassesTheHeadOnWhileTheCommandRuns(t *testing.T) {
+	w := &signalWriter{first: make(chan struct{})}
+	c := spew(600, 0, "ADANEXT_TEST_WAIT=3s")
+	c.Stdout = w
+	c.OutputCap = 900
+	done := make(chan error, 1)
+	go func() { _, err := Run(context.Background(), c); done <- err }()
+	select {
+	case <-w.first:
+	case err := <-done:
+		t.Fatalf("Run returned (%v) before any output arrived", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("no output while the command ran")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned (%v) as the head arrived; the command was still waiting", err)
+	default:
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.buf.String() != digits(600) {
+		t.Fatalf("output %q", w.buf.String())
+	}
+}
