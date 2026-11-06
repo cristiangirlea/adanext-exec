@@ -135,8 +135,10 @@ a scan finds none. Nothing that started before the command's own process is take
 parent link is followed only to a child no older than its parent. On Linux a process is pinned
 with a pidfd and its start time checked before the signal (before Linux 5.3, without pidfds,
 the check comes just before the signal); on macOS the table is read again and the start time
-checked just before the signal, which leaves a short window for a reused pid. If the command's
-start time cannot be read, only the group is killed and the error says so. The marker shows
+checked just before the signal, which leaves a short window for a reused pid. The bound on
+start times comes from the clock just before the command starts, a second early, and narrows to
+the command's own start time when that can be read (a caller that ignores SIGCHLD can have it
+reaped first). Only if neither can be read is only the group killed, and the error says so. The marker shows
 which tree a process came from; it is not proof: a process the user starts after the command
 and gives the marker on purpose is killed with the tree. What still escapes: a
 process that both clears its environment and is orphaned before the kill (a double-forking

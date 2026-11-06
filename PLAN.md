@@ -45,6 +45,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: #31 (PR #32), a fix to M1b. A leader reaped before its start time was read
+  (its caller ignoring SIGCHLD) left the tree with no bound, so Kill refused to kill anything
+  and a marked descendant survived; CI caught it as a flaky test. The bound now comes from the
+  clock before the start, narrowed to the leader's own start time when it can be read.
 - 2026-11-06: M1b (PR #28). A process that leaves the group is found by a marker in the
   environment, the technique of build servers' process-tree killers, and by parent links at
   kill time, instead of `PR_SET_CHILD_SUBREAPER` (#10): a subreaper changes the whole caller,
