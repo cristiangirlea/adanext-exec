@@ -4,6 +4,7 @@ package tree
 
 import (
 	"encoding/binary"
+	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -56,16 +57,33 @@ func TestALiveChildKeepsTheGroupOfAZombieLeaderAlive(t *testing.T) {
 	}
 }
 
-// table builds a process table of the given members.
-func table(members ...[2]int) string {
+// table builds a process table of the given members: group, state and, optionally, flags.
+func table(members ...[2]int) string { return tableWithFlags(members, nil) }
+
+func tableWithFlags(members [][2]int, flags []uint32) string {
 	b := make([]byte, 0, len(members)*kinfoProcSize)
-	for _, m := range members {
+	for i, m := range members {
 		k := make([]byte, kinfoProcSize)
 		binary.LittleEndian.PutUint32(k[kinfoPGID:], uint32(m[0]))
 		k[kinfoStat] = byte(m[1])
+		if i < len(flags) {
+			binary.LittleEndian.PutUint32(k[kinfoFlag:], flags[i])
+		}
 		b = append(b, k...)
 	}
 	return string(b)
+}
+
+func TestAnExitingMemberDoesNotKeepTheGroupAlive(t *testing.T) {
+	const pgid, running = 4242, 2 // SRUN
+	exiting := tableWithFlags([][2]int{{pgid, running}}, []uint32{flagExiting | 0x4})
+	if groupHasLiveMembersIn(pgid, func() (string, error) { return exiting, nil }, 0) {
+		t.Fatal("a member that is exiting counted as live")
+	}
+	other := tableWithFlags([][2]int{{pgid, running}}, []uint32{0x4}) // P_LP64 alone
+	if !groupHasLiveMembersIn(pgid, func() (string, error) { return other, nil }, 0) {
+		t.Fatal("a running member with other flags counted as gone")
+	}
 }
 
 func TestTheGroupCountsAsLiveUnlessTwoReadsFindOnlyZombies(t *testing.T) {
@@ -94,4 +112,24 @@ func TestTheGroupCountsAsLiveUnlessTwoReadsFindOnlyZombies(t *testing.T) {
 	if !groupHasLiveMembersIn(pgid, func() (string, error) { return "", syscall.ENOMEM }, 0) {
 		t.Fatal("a table that keeps growing: want live")
 	}
+}
+
+func TestTheFlagsOfThisProcessReadAsA64BitProcessNotExiting(t *testing.T) {
+	raw, err := syscall.Sysctl("kern.proc.all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := []byte(raw)
+	for off := 0; off+kinfoProcSize <= len(b); off += kinfoProcSize {
+		k := b[off : off+kinfoProcSize]
+		if int(int32(binary.LittleEndian.Uint32(k[kinfoPID:]))) != os.Getpid() {
+			continue
+		}
+		flags := binary.LittleEndian.Uint32(k[kinfoFlag:])
+		if flags&0x4 == 0 || gone(k) { // P_LP64
+			t.Fatalf("this process's flags %#x: want P_LP64 and not exiting", flags)
+		}
+		return
+	}
+	t.Fatal("this process is not in the table")
 }
