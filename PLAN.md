@@ -18,8 +18,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     nests (#19). Done: PR #27, 2026-11-06.
   - [ ] **M1b: what leaves the group on Unix.** Kill descendants that called `setsid` (#10) and
     the group when the caller dies (#11), or say where it cannot.
-  - [ ] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
-    buffer does.
+  - [x] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
+    buffer does. Done: PR #30, 2026-11-06.
   - [ ] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
     and what the audit and the broker do not cover said in the design (#13). The patterns are
     the audit's own until M2's policy brings its secret list, which then shares them.
@@ -45,6 +45,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M1c (PR #30, #29). The cap is per stream and optional (zero is none; the binary
+  can set a default in M3). Its head passes through live, so a caller still sees a command's
+  output as it runs; the tail is held and written at the end, which delays output past the
+  head until the command ends. Cutting may split a multi-byte character, as harness's buffer
+  does.
 - 2026-11-06: M1a (PR #27). `broker.Run` also kills what a command leaves running when its own
   process exits, on every platform, so nothing a command starts outlives it; the design said
   only "when it must stop". A job that cannot be made or assigned refuses the command
