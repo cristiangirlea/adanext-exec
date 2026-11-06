@@ -184,14 +184,37 @@ Per command:
 
 Across commands (daemon):
 
-- **Heavy-command slots.** Commands are classified (`go test`, `go build`, `cargo build`,
-  `npm test`, `npm run build`, `gradle`, `make`, test runners; configurable). At most N heavy
-  commands run at once on the machine (default: CPU count / 4, at least 1); the rest wait in a
-  fair queue, oldest first, with the wait shown to the caller. Light commands never wait.
-  A slot is a lease on the client's connection to the daemon (M4a, #9): closing the connection,
-  for any reason, releases it, so the daemon never has to tell processes apart. Until the
-  classification lands (M4c), every command that asks for a slot is counted heavy.
-  [protocol.md](protocol.md) has the messages.
+- **Heavy-command slots.** At most N heavy commands run at once on the machine (default: CPU
+  count / 4, at least 1); light commands never wait. A slot is a lease on the client's
+  connection to the daemon (M4a, #9): closing the connection, for any reason, releases it, so
+  the daemon never has to tell processes apart. [protocol.md](protocol.md) has the messages.
+- **Which commands are heavy (M4c, #15).** Builds, test runners and package installs:
+  `go build|test|vet|install|generate`, cargo's builds and tests, `npm`/`pnpm`/`yarn`/`bun`
+  installs, tests and build scripts, `gradle`, `mvn`, `make`, `ninja`, `msbuild`, `bazel`,
+  `cmake --build`, `dotnet build|test|publish`, `pytest`, `tox`, `nox`, `docker build`, and test
+  runners through `npx`. A command is read the way its program reads it: the program by its
+  base name without `.exe`, `.cmd` or `.bat`, its global flags skipped with their values, then
+  its subcommand, so `go -C dir test` and `npm --prefix web run build` are heavy, and `git grep
+  make` or `echo "go test"` are not. Wrappers (`time`, `env`, `sudo`, `nice`, `timeout`,
+  `xargs` and the like) and package executors (`npx`, `bunx`, `pnpm exec`, `yarn exec`) are
+  read through to the command they run. Shell text is read command by command, split at `&&`,
+  `||`, `;`, `|`, parentheses and new lines, with leading `VAR=value` assignments skipped; a
+  command substitution (`$( )`, and backticks in sh and bash) is a command of its own, also
+  inside double quotes, and the escape character is the shell's (backslash, PowerShell's
+  backtick, cmd's caret). It reads ordinary command lines, not every form a shell has. `serve --config
+  FILE` adds patterns of its own (Go regular expressions matched against the whole command
+  line), or with `"only": true` uses only those; the file is checked as the policy file is.
+- **A fair share per client.** A freed slot goes to the waiting client that holds the fewest
+  slots, the one that asked first among equals, so one agent's batch of builds cannot keep
+  another agent waiting behind all of it. A client is its caller's agent and session, or its
+  own connection when it gives neither; the place each waiter is told follows the same order.
+- **A build's own parallelism.** A build's load is its own parallelism as much as the count of
+  builds, so a granted slot carries hints that give each heavy command its share of the CPUs
+  (CPU count / N): `GOFLAGS=-p=K`, `GOMAXPROCS=K`, `MAKEFLAGS=-jK`, `CARGO_BUILD_JOBS=K`. A
+  variable the caller set keeps its value.
+- **Waiting within a tool's timeout.** A caller with a time limit of its own, such as a Claude
+  Code tool call, bounds its wait with `--max-wait` (`Slots.MaxWait`) below that limit, so a
+  queued command ends with a clear answer (exit 124) instead of being cut off.
 
 ## How it controls processes, per platform
 

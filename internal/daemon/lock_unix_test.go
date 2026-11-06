@@ -8,7 +8,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // nobody is an account that is not the test's, for the root-only tests.
@@ -65,5 +67,37 @@ func TestTheSocketAndItsDirectoryAreOwnerOnly(t *testing.T) {
 		if fi.Mode().Perm() != want {
 			t.Errorf("%s: mode %v, want %v", path, fi.Mode().Perm(), want)
 		}
+	}
+}
+
+// The configuration is read as the policy is: one others can write is refused, and a pipe is
+// refused at once, not waited on.
+func TestAConfigOthersCanWriteOrAPipeIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	if err := os.WriteFile(path, []byte(`{"version": 1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o622); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Error("a config others can write was read")
+	}
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := LoadConfig(fifo)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a pipe was read as a config")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadConfig waited on a pipe")
 	}
 }

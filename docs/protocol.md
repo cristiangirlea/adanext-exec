@@ -105,12 +105,25 @@ outcome but `-h` has its one answer line, a usage error included:
 ## The daemon (M4)
 
 ```
-adanext-exec serve [--slots N] [--socket PATH]
+adanext-exec serve [--slots N] [--socket PATH] [--config FILE]
 ```
 
 Runs the daemon until it is interrupted: N heavy-command slots (default: the number of CPUs
 divided by 4, at least 1) on PATH (default: `<state dir>/adanext-exec/daemon/daemon.sock`). It
-refuses to start elevated, or when another daemon holds the socket (exit 126).
+refuses to start elevated, or when another daemon holds the socket (exit 126), and refuses a
+configuration it cannot use (exit 121).
+
+The configuration says which commands are heavy, beyond the built-in list in
+[design.md](design.md):
+
+```json
+{"version": 1, "heavy": ["\\bterraform\\s+apply\\b"], "only": false}
+```
+
+`heavy` holds Go regular expressions matched against the whole command line (an argv joined
+with spaces, or shell text as written); with `"only": true` they are used alone, without the
+built-in list. The file is read strictly (no unknown field, no `null`, no key
+twice), at most 1 MiB, and on Linux and macOS must be the user's and writable by no one else.
 
 `adanext-exec serve` shares heavy-command slots among every client on the machine. A client
 opens one connection to the daemon's local socket per command, and both sides write one JSON

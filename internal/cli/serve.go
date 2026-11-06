@@ -22,6 +22,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	slots := flags.Int("slots", max(1, runtime.NumCPU()/4), "how many heavy commands run at once")
 	socket := flags.String("socket", "", "the socket to listen on (default: the user's state directory)")
+	config := flags.String("config", "", "the daemon's configuration: more heavy-command patterns, or only its own")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -36,9 +37,16 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "adanext-exec serve: --slots must be 1 or more")
 		return ExitUsage
 	}
+	classifier, err := daemon.NewClassifier(true, nil)
+	if *config != "" {
+		classifier, err = daemon.LoadConfig(*config)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "adanext-exec serve:", err)
+		return ExitUsage
+	}
 	path := *socket
 	if path == "" {
-		var err error
 		if path, err = defaultSocket(); err != nil {
 			fmt.Fprintf(stderr, "adanext-exec serve: %v\n", err)
 			return ExitCannotRun
@@ -53,7 +61,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	defer closeFn()
 	fmt.Fprintf(stderr, "adanext-exec serve: %d slots on %s\n", *slots, path)
-	if err := (&daemon.Server{Slots: *slots}).Serve(ctx, l); err != nil {
+	server := &daemon.Server{Slots: *slots, Heavy: classifier.Heavy, Hints: daemon.ParallelHints(*slots)}
+	if err := server.Serve(ctx, l); err != nil {
 		fmt.Fprintf(stderr, "adanext-exec serve: %v\n", err)
 		return ExitCannotRun
 	}

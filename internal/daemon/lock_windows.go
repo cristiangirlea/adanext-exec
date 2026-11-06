@@ -147,3 +147,9 @@ func ownerOnlySocket(string) error { return nil }
 
 // refused reports whether a dial failed because nothing serves the socket.
 func refused(err error) bool { return errors.Is(err, wsaeconnrefused) }
+
+// openNonBlock has no Windows form; opening a named pipe that has no server fails at once.
+const openNonBlock = 0
+
+// onlyOwnerWrites has nothing to check on Windows, where the file's access list decides.
+func onlyOwnerWrites(string, os.FileInfo) error { return nil }
