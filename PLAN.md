@@ -45,6 +45,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: #33 (PR #34), a fix to M1a's macOS group check. A kill that came while signalled
+  members were still exiting was reported as refused, since `kinfo_proc` shows an exiting
+  process as running; its `P_WEXIT` flag now counts it as gone. CI caught it as a flaky test.
 - 2026-11-06: M1c (PR #30, #29). The cap is per stream and optional (zero is none; the binary
   can set a default in M3). Its head passes through live, so a caller still sees a command's
   output as it runs; the tail is held and written at the end, which delays output past the
