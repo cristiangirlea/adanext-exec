@@ -45,6 +45,13 @@ type Command struct {
 	// last third is written after a line that counts the bytes left out. Memory stays bounded by
 	// the cap whatever the command writes.
 	OutputCap int
+
+	// Caller says who asked, for the audit; it is self-reported.
+	Caller Caller
+	// Audit, when set, gets one line for this command, written whether it ran or not. A
+	// command whose line cannot be opened is not run (ErrAudit). The environment is never
+	// written to the audit.
+	Audit *Audit
 }
 
 // Shell names a shell that reads a Command's Script.

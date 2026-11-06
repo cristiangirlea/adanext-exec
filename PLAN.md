@@ -8,9 +8,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 - [x] **M0: the repository.** AI setup, CI on GitHub's hosted runners, the design, the SDK's first
   package (`broker.ProtocolVersion`). Done: PR #3, 2026-10-14. Its review's design concerns are
   issues #4 to #22, each naming its milestone.
-- [ ] **M1: one command, contained.** `broker.Run` with a timeout, a whole-tree kill, an output
+- [x] **M1: one command, contained.** `broker.Run` with a timeout, a whole-tree kill, an output
   cap and an audit line, on Windows (Job Objects), Linux and macOS (process groups). Done when
-  M1a to M1d are.
+  M1a to M1d are. Done: PRs #27, #28, #30, #33, 2026-11-06.
   - [x] **M1a: run and kill the tree.** `broker.Run` takes argv or shell text with a named shell
     (#4), stops at a timeout or a cancelled context, and kills the whole tree, also what is left
     when the command exits: a Job Object on Windows (from harness), a process group on Linux and
@@ -20,9 +20,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     the group when the caller dies (#11), or say where it cannot. Done: PR #28, 2026-11-06.
   - [x] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
     buffer does. Done: PR #30, 2026-11-06.
-  - [ ] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
+  - [x] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
     and what the audit and the broker do not cover said in the design (#13). The patterns are
-    the audit's own until M2's policy brings its secret list, which then shares them.
+    the audit's own until M2's policy brings its secret list, which then shares them. Done:
+    PR #33, 2026-11-06.
 - [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
   tests.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
@@ -45,6 +46,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M1d (PR #33). The audit is opt-in in the SDK (`Command.Audit`; nil writes none)
+  and the binary will always set it (M3); when set, a command whose line cannot be opened is not
+  run. Redaction ports harness's masking rules (`internal/mask`) into `internal/redact`, adds
+  private keys and the value after a credential flag in argv, and masks the values of
+  secret-named environment variables. Dates are UTC.
 - 2026-11-06: M1c (PR #30, #29). The cap is per stream and optional (zero is none; the binary
   can set a default in M3). Its head passes through live, so a caller still sees a command's
   output as it runs; the tail is held and written at the end, which delays output past the
