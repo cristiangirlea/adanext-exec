@@ -55,15 +55,20 @@ var ErrPolicy = errors.New("the policy cannot be used")
 var ErrRefused = errors.New("refused by the policy")
 
 // RefusedError is the error Run returns for a command its policy refused, or answered ask for
-// with no person to ask.
+// when no person could be asked or the person declined.
 type RefusedError struct {
 	Verdict Verdict
+	// Declined says a person was asked (Command.Ask) and said no.
+	Declined bool
 }
 
 func (e *RefusedError) Error() string {
 	rule := e.Verdict.Rule
 	if rule == "" {
 		rule = "the default"
+	}
+	if e.Declined {
+		return fmt.Sprintf("%v: %s asked a person, who declined", ErrRefused, rule)
 	}
 	if e.Verdict.Decision == Ask {
 		return fmt.Sprintf("%v: %s asks a person, and none can be asked here", ErrRefused, rule)

@@ -119,9 +119,14 @@ M2b delivers the policy as `broker.Policy`, read by `ParsePolicy` or `LoadPolicy
   `LoadPolicy` reads a regular file of at most 1 MiB, following a link; it opens without
   waiting, so a pipe at the name is refused rather than hanging. On Linux and macOS the file
   must be the user's own and writable by no one else.
-- `Command.Policy` makes `Run` judge the command before it starts. A refusal, and an ask (`Run`
-  has no person to ask until M2c), returns a `*RefusedError` (`ErrRefused`) naming the rule,
-  and the command does not run. A zero `Policy` judges nothing and runs nothing (`ErrPolicy`).
+- `Command.Policy` makes `Run` judge the command before it starts. A refusal returns a
+  `*RefusedError` (`ErrRefused`) naming the rule, and the command does not run.
+- An ask goes to `Command.Ask` (M2c, #20), a callback for a caller that can put the command to
+  a person, such as hrn in ask mode. It is given the command and the verdict, before the
+  command starts: yes runs it, no refuses it (`RefusedError.Declined`), and an error leaves it
+  not run. With no `Command.Ask`, an ask refuses. Only an ask is put to a person, never a
+  refusal; the time spent asking counts against the caller's context, not the command's
+  timeout, and a context that ended while the person answered runs nothing. A zero `Policy` judges nothing and runs nothing (`ErrPolicy`).
   Leaving the policy out of the SDK judges nothing, as leaving out the audit writes nothing;
   the binary always sets one (M3).
 
@@ -254,7 +259,7 @@ M1d delivers the line through `broker.Command.Audit`, with the fields there are 
 queue wait and peak memory arrive with M4 and M5): `time` (the start, UTC), `caller`, `dir`,
 `args` or `shell` and `script`, `outcome` (exited, signalled, timed out, cancelled, refused,
 not run), `decision` and `rule` (M2b: the policy's verdict, when there is a policy, and the rule
-that gave it), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+that gave it), `approved` (M2c: a person's answer, when one was asked), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
 Run did not run gets its line too, with the reason; a command whose line cannot be opened is
 not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
 (`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,

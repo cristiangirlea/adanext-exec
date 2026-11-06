@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -53,10 +54,17 @@ type Command struct {
 	// written to the audit.
 	Audit *Audit
 
-	// Policy, when set, judges the command before it starts: one it refuses, or answers ask
-	// for, is not run (ErrRefused), and neither is one a zero Policy cannot judge (ErrPolicy).
-	// Nil judges nothing; the binary always sets one.
+	// Policy, when set, judges the command before it starts: one it refuses is not run
+	// (ErrRefused), nor one it answers ask for unless Ask approves it, nor one a zero Policy
+	// cannot judge (ErrPolicy). Nil judges nothing; the binary always sets one.
 	Policy *Policy
+	// Ask, when set, is called when the policy answers ask, before the command starts, to put
+	// the command to a person: true runs it, false refuses it (a *RefusedError), and an error
+	// leaves it not run. Nil means no person can be asked, and an ask refuses. Ask is never
+	// called for a command the policy allows or refuses. The time it takes counts against ctx,
+	// not Timeout. Its Command has its own copies of Args and Env, so changing them changes
+	// nothing that runs; Stdin, Stdout and Stderr are the caller's own and are not to be used.
+	Ask func(ctx context.Context, c Command, v Verdict) (bool, error)
 }
 
 // Shell names a shell that reads a Command's Script.

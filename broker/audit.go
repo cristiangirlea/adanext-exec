@@ -135,6 +135,7 @@ type auditRecord struct {
 	Outcome    string   `json:"outcome"`            // exited, signalled, timed out, cancelled, refused, not run
 	Decision   Decision `json:"decision,omitempty"` // the policy's, when there is one
 	Rule       string   `json:"rule,omitempty"`     // the rule that decided, when one did
+	Approved   *bool    `json:"approved,omitempty"` // a person's answer, when one was asked
 	ExitCode   *int     `json:"exit_code,omitempty"`
 	Signal     string   `json:"signal,omitempty"`
 	DurationMS int64    `json:"duration_ms"`
@@ -149,7 +150,7 @@ type snapshot struct {
 }
 
 // record describes the command, as given and as it ended, with secrets taken out.
-func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, res Result, ran bool, err error) auditRecord {
+func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approved *bool, res Result, ran bool, err error) auditRecord {
 	clean := cleaner(snap.env)
 	rec := auditRecord{
 		Time:       begin.UTC().Format(time.RFC3339Nano),
@@ -173,6 +174,9 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, res Re
 	}
 	if verdict != nil {
 		rec.Decision, rec.Rule = verdict.Decision, verdict.Rule
+	}
+	if approved != nil {
+		rec.Approved = approved
 	}
 	switch {
 	case errors.Is(err, ErrRefused):

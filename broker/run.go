@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"time"
 
@@ -64,9 +65,10 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // With Command.Audit set, Run writes one line for the command, also for one it did not run,
 // and refuses to run a command whose line it cannot open (ErrAudit).
 //
-// With Command.Policy set, Run judges the command first and runs only what the policy allows:
-// a refusal, or an ask, since Run has no person to ask, returns a *RefusedError (ErrRefused)
-// with a zero Result.
+// With Command.Policy set, Run judges the command first and runs only what the policy allows,
+// or what a person approves through Command.Ask when the policy answers ask: a refusal, a
+// declined ask, or an ask with no Command.Ask returns a *RefusedError (ErrRefused) with a zero
+// Result.
 //
 // The console's Ctrl+C reaches the command as it reaches the caller. A caller that wants to
 // report after one handles os.Interrupt and cancels ctx: Run then kills the tree and returns.
@@ -98,6 +100,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		}
 	}
 	var verdict *Verdict
+	var approved *bool
 	var res Result
 	var ran bool
 	var err error
@@ -105,7 +108,21 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		var v Verdict
 		if v, err = c.Policy.Check(c); err == nil {
 			verdict = &v
-			if v.Decision != Allow {
+			switch {
+			case v.Decision == Ask && c.Ask != nil:
+				var ok bool
+				// The asker gets its own Args and Env, so nothing it changes reaches what runs.
+				shown := c
+				shown.Args, shown.Env = slices.Clone(c.Args), slices.Clone(c.Env)
+				if ok, err = c.Ask(ctx, shown, v); err != nil {
+					err = fmt.Errorf("ask about %s: %w", v.Rule, err)
+				} else {
+					approved = &ok
+					if !ok {
+						err = &RefusedError{Verdict: v, Declined: true}
+					}
+				}
+			case v.Decision != Allow:
 				err = &RefusedError{Verdict: v}
 			}
 		}
@@ -114,7 +131,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		res, ran, err = run(ctx, c)
 	}
 	if log != nil {
-		if aerr := log.write(c.record(snap, begin, verdict, res, ran, err)); aerr != nil {
+		if aerr := log.write(c.record(snap, begin, verdict, approved, res, ran, err)); aerr != nil {
 			err = errors.Join(err, aerr)
 		}
 	}
