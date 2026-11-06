@@ -64,6 +64,10 @@ Newest first.
   group id cannot be reused in between. The SDK leaves console groups alone (#19): reporting
   after Ctrl+C is the caller's, and `adanext-exec run` does it in M3. PowerShell text goes
   through `-Command`; passing it without a reparse stays with #5 (M6).
+  On macOS a signal to a group of zombies fails with EPERM; the group counts as gone when two
+  reads of the process table show no live member. The race this leaves (a member the user
+  cannot signal hiding a child during both reads) is accepted and written in the design: macOS
+  has no atomic listing, and such a process could not be killed anyway.
 - 2026-11-06: M1 and M4 split into smaller milestones (#22). M1 into running with a timeout and
   the tree kill on every platform (M1a), what leaves the group on Unix (M1b), the output cap
   (M1c) and the audit (M1d); M4 into the protocol, the daemon with its leases, and the

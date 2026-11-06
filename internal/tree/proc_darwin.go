@@ -18,15 +18,12 @@ func startCmd(t *Tree, cmd *exec.Cmd) error { return cmd.Start() }
 
 // The layout of struct kinfo_proc on 64-bit macOS (amd64 and arm64), from <sys/sysctl.h> and
 // <sys/proc.h>.
+// kinfoProcSize, kinfoStat, kinfoPGID and stateZombie are in group_darwin.go.
 const (
-	kinfoProcSize  = 648
 	kinfoStartSec  = 0   // kp_proc.p_starttime.tv_sec, int64
 	kinfoStartUsec = 8   // kp_proc.p_starttime.tv_usec, int32
-	kinfoStat      = 36  // kp_proc.p_stat
 	kinfoPID       = 40  // kp_proc.p_pid
 	kinfoPPID      = 560 // kp_eproc.e_ppid
-	kinfoPGID      = 564 // kp_eproc.e_pgid
-	stateZombie    = 5   // SZOMB
 )
 
 // listProcs reads the process table from kern.proc.all.

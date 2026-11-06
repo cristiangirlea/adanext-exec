@@ -173,6 +173,10 @@ func (t *Tree) killGroup() error {
 	if err == nil || errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
+	// macOS answers EPERM for a group whose only members are zombies.
+	if errors.Is(err, syscall.EPERM) && !groupHasLiveMembers(t.pgid) {
+		return nil
+	}
 	return fmt.Errorf("kill process group %d: %w", t.pgid, err)
 }
 

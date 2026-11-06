@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // processState says whether pid runs and when it started (start ticks), so a reused pid is not
 // taken for the same process. A zombie does not run.
 func processState(pid int) (born string, alive bool, err error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return "", false, nil // gone, also while the read was under way
 	}
 	if err != nil {
 		return "", false, err
