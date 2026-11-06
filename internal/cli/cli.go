@@ -40,6 +40,7 @@ const (
 const usage = `usage:
   adanext-exec run [flags] -- <program> [args...]
   adanext-exec run [flags] --shell <name> -- <script>
+  adanext-exec check --json [--policy FILE | --profile NAME] < request.json
 
 Run "adanext-exec run -h" for the flags.
 `
@@ -55,13 +56,16 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	if isElevated() {
-		fmt.Fprintln(stderr, "adanext-exec: refusing to run as root or an elevated administrator")
-		return ExitCannotRun
-	}
 	switch args[0] {
 	case "run":
+		if isElevated() {
+			fmt.Fprintln(stderr, "adanext-exec: "+errElevated)
+			return ExitCannotRun
+		}
 		return run(ctx, args[1:], stdin, stdout, stderr)
+	case "check":
+		// check answers the refusal in its own JSON, as it answers everything else.
+		return check(args[1:], stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "adanext-exec: unknown command %q\n%s", args[0], usage)
 	return ExitUsage
@@ -69,3 +73,5 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 
 // isElevated reports whether the binary runs as root or an elevated administrator; tests replace it.
 var isElevated = elevated
+
+const errElevated = "refusing to run as root or an elevated administrator"

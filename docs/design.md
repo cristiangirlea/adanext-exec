@@ -42,7 +42,8 @@ macOS, with one policy, one set of limits and one audit log.
 never left out by the binary. `--approved RULE` answers through `Command.Ask` and says yes only
 to an ask under RULE. The binary handles Ctrl+C and a terminate request by cancelling the
 command, whose tree is then killed, and refuses to run as root or an elevated administrator.
-Its exit codes (#12) tell a refusal, a timeout, an interruption, a signal, a program not found,
+`adanext-exec check --json` (M3b) answers a JSON request with the decision and its rule,
+running nothing. Its exit codes (#12) tell a refusal, a timeout, an interruption, a signal, a program not found,
 a command that could not run, and one that ran but whose output, audit line or clean-up failed
 apart; [protocol.md](protocol.md) lists them.
 

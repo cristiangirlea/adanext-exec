@@ -32,11 +32,12 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     audit outcome, and the trust statement (#21). Done: PR #40, 2026-11-06.
   - [x] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
     Done: PR #41, 2026-11-06.
-- [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
+- [x] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`). Done when M3a and M3b are.
   - [x] **M3a: run** (#42). `adanext-exec run` with the policy and the audit always set,
     `--approved`, Ctrl+C, no elevation, and distinct exit codes (#12). Done: PR #45, 2026-11-06.
-  - [ ] **M3b: check** (#43). `adanext-exec check --json` and the protocol document.
+  - [x] **M3b: check** (#43). `adanext-exec check --json` and the protocol document.
+    Done: PR #46, 2026-11-06.
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
   - [ ] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
@@ -55,6 +56,12 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M3b (PR #46), which completes M3. `check --json` judges without running or
+  auditing anything. Every outcome has one versioned JSON answer, and an answer that cannot
+  be written exits 126, so a hook reading only the code fails closed. A request is strict:
+  unknown fields, other types (a `null` argument too), unknown shells and trailing data are
+  errors, never a decision. A version names its major only; a change an existing client could
+  misread is a new major, and readers refuse what they do not know.
 - 2026-11-06: M3a (PR #45, #12). The binary's own exit codes sit in 120 to 130, following
   GNU timeout (124 to 127) and shells (128+n, 130 for an interrupt), and a command's own code
   passes through; one that exits with a code of that band by itself cannot be told from the
