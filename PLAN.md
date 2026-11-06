@@ -26,7 +26,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     PR #35, 2026-11-06.
 - [ ] **M2: policy.** Rules, decisions (allow, ask, refuse) and harness's guard rule set with its
   tests. Done when M2a to M2c are.
-  - [ ] **M2a: the guard** (#36). harness's command guard in `internal/guard`, with its tests.
+  - [x] **M2a: the guard** (#36). harness's command guard in `internal/guard`, with its tests.
+    Done: PR #39, 2026-11-06.
   - [ ] **M2b: the policy** (#37). The JSON rules, the decisions, `Run` keeping to them, the
     audit outcome, and the trust statement (#21).
   - [ ] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
@@ -50,6 +51,11 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M2a (PR #39). The guard is harness's at its commit `014b929`, with its tables:
+  nine rules, without `guard-env`, whose 41 rows were left out (40 match nothing here; one names
+  `.npmrc` and meets `secret-file`). It reports every rule a line meets, not the first, so a
+  policy can give one rule another decision and still see the rest. harness's tests of its
+  workspace, environment and error text stay there.
 - 2026-11-06: M2 split into the guard (M2a), the policy (M2b) and ask (M2c), one issue, branch
   and PR each. The guard comes first, as a plain port that harness's tests prove; the policy is
   then built around it. harness's `guard-env` rule stays in harness: it guards the environment
