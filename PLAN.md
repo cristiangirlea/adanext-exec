@@ -56,7 +56,13 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     2026-11-07.
   - [ ] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
     delegated.
-- [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell.
+- [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell. Done when M6a and M6b
+  are.
+  - [x] **M6a: the hook** (#56, #8, #5). `adanext-exec hook claude-code` judges Bash and
+    PowerShell commands and rewrites them to `run --script-b64`, so no shell reparses the text.
+    Done: PR #58, 2026-11-07.
+  - [ ] **M6b: the user's rules and the binary** (#57, #6, #7). The user's permission rules
+    applied to the original text, the hook's version carried to `run`, and installing.
 - [ ] **M7: hrn.** harness's tools run shell commands through the SDK.
 - [ ] **M8: AdaNext OS.** `adad` runs task commands through the SDK.
 
@@ -64,6 +70,15 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M6 split into the hook (M6a) and the user's rules with the binary's discovery
+  (M6b), one issue and PR each. M6a (PR #58, #56): the hook is the binary's own subcommand, so
+  it needs no shell of its own (#8), and the rewrite carries the text as URL-safe base64 without
+  padding, which neither Bash, PowerShell nor Git Bash's path conversion changes (#5). The design
+  had the rewrite as `run -- <command>`. The PowerShell tool's text runs under `pwsh` when it is
+  in PATH, else Windows PowerShell. A command that passes `-approved` or `-script-b64` itself is
+  denied: through the hook an agent could otherwise approve its own ask or hide a script from
+  the policy. Every failure is a deny, or exit 2, since Claude Code runs the command as it is
+  when a hook gives no answer or fails another way.
 - 2026-11-07: M5b (PR #55, #51). Linux and macOS watch the tree's resident memory every 100 ms
   and kill it past the ceiling: best effort, and written so. The watch counts what the kill
   reaches (the group, marked processes, their descendants), reading each process's marker once,
