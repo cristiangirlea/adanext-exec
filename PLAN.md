@@ -33,7 +33,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   - [x] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
     Done: PR #41, 2026-11-06.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
-  (`docs/protocol.md`).
+  (`docs/protocol.md`). Done when M3a and M3b are.
+  - [ ] **M3a: run** (#42). `adanext-exec run` with the policy and the audit always set,
+    `--approved`, Ctrl+C, no elevation, and distinct exit codes (#12).
+  - [ ] **M3b: check** (#43). `adanext-exec check --json` and the protocol document.
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
   - [ ] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
@@ -52,6 +55,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M3 split into `run` with its exit codes (M3a) and `check` with the protocol
+  document (M3b), one issue, branch and PR each. The protocol of M3 is what a client says to
+  the binary (the `check` request and answer, `run`'s exit codes); the daemon's messages come
+  with M4a.
 - 2026-11-06: M2c (PR #41, #20), which completes M2. `Command.Ask` puts an ask to a person
   before the command starts: yes runs it, no refuses it, an error leaves it not run, and none
   set refuses as before. A refusal is never asked about, so a person cannot overrule one. The
