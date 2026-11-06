@@ -42,8 +42,10 @@ const (
 const usage = `usage:
   adanext-exec run [flags] -- <program> [args...]
   adanext-exec run [flags] --shell <name> -- <script>
+  adanext-exec run [flags] --shell <name> --script-b64 <script as URL-safe base64>
   adanext-exec check --json [--policy FILE | --profile NAME] < request.json
   adanext-exec serve [--slots N] [--socket PATH]
+  adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
 
 Run "adanext-exec run -h" for the flags.
 `
@@ -75,6 +77,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "check":
 		// check answers the refusal in its own JSON, as it answers everything else.
 		return check(args[1:], stdin, stdout, stderr)
+	case "hook":
+		// The hook answers every failure, elevation included, as a deny Claude Code reads.
+		return hook(args[1:], stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "adanext-exec: unknown command %q\n%s", args[0], usage)
 	return ExitUsage
