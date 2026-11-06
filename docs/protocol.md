@@ -27,6 +27,7 @@ exits.
 | `--slots` | Wait for one of the daemon's heavy-command slots before the command starts, and hold it until the command ends. The wait is shown on standard error with its place in the queue. |
 | `--socket PATH` | The daemon's socket, instead of `<state dir>/adanext-exec/daemon/daemon.sock`; implies `--slots`. |
 | `--max-wait D` | With `--slots`: give up after waiting D for a slot. The wait counts toward no `--timeout`, which starts with the command. |
+| `--memory SIZE` | A ceiling on the memory of the command and everything it starts, together: bytes, or a whole number with `K`, `M` or `G` (powers of 1024). Where the platform does not enforce it, the binary says so on standard error and the command runs without it. |
 | `--agent`, `--session`, `--run-id` | Who asked, for the audit; self-reported. |
 
 **The policy is always set.** It comes from `--policy`, `--profile`, or
@@ -52,7 +53,7 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 |---|---|
 | 120 | The command ran, but something after it failed: writing its output, writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
 | 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`. |
-| 122 | Reserved: the command went over its memory ceiling (M5). |
+| 122 | The command and what it started went over `--memory` together, and the tree was stopped. |
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |

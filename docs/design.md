@@ -175,7 +175,21 @@ the group unsignalled, since its id may then belong to another process.
 Per command:
 
 - **Timeout**, then a whole-tree kill (below).
-- **Memory ceiling** for the command and everything it starts.
+- **Memory ceiling** for the command and everything it starts (`Command.MemoryLimit`, `run
+  --memory`; M5). A tree over it is stopped and reported (`Result.MemoryExceeded`, exit 122).
+  Where a platform cannot enforce it, the command runs without it and the result, the audit
+  and the binary say so (`Result.MemoryEnforced` false), never pretending.
+  - Windows (M5a): the Job Object's job memory limit caps the committed memory of every process
+    in the job together: an allocation past it fails. The job counts the refused amount in its
+    peak, so the broker reads the job's peak every 50 ms while the command runs and kills the
+    tree once it passes the ceiling, so the command is stopped rather than left running with
+    failing allocations; after the command ends, a peak past the ceiling also marks it. A peak
+    that cannot be read stops the tree as well, and the result carries the error. The job's
+    completion-port notice of the same event is not used, since Windows does not promise to
+    deliver it. `Result.PeakMemory` is the job's peak committed memory, refused allocations
+    included, so it can stand over the ceiling. A ceiling larger than the platform's SIZE_T is
+    refused rather than cut down.
+  - Linux and macOS: not enforced until the watchdog (M5b) and the cgroup ceiling (M5c).
 - **Output cap** (head and tail kept, the middle counted), as harness's bounded buffer does.
   `Command.OutputCap` bounds each stream (stdout and stderr, or one stream when both go to the
   same writer): its first two thirds pass through as the command writes them, the rest is held,
@@ -221,7 +235,7 @@ Across commands (daemon):
 | Concern | Windows | Linux | macOS |
 |---|---|---|---|
 | Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`), the command started suspended and assigned before it runs; never breakaway | New process group (`Setpgid`) and a marker in the environment; kill the group, every process carrying the marker, and their descendants; the leader dies with its caller (`Pdeathsig`); cgroup v2 when delegated | The same, without a parent-death signal |
-| Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`, with its completion-port notice so the command is stopped, not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
+| Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`; the job's peak, read every 50 ms, stops the tree once past it (M5a), so the command is not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
 | Memory ceiling (portable, best effort: a short spike between polls can pass) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
 
@@ -294,10 +308,12 @@ before anything is written. Nothing leaves the machine.
 
 M1d delivers the line through `broker.Command.Audit`, with the fields there are so far (the
 queue wait and peak memory arrive with M4 and M5): `time` (the start, UTC), `caller`, `dir`,
-`args` or `shell` and `script`, `outcome` (exited, signalled, timed out, cancelled, refused,
-not run), `decision` and `rule` (M2b: the policy's verdict, when there is a policy, and the rule
+`args` or `shell` and `script`, `outcome` (exited, signalled, timed out, cancelled, over its
+memory ceiling, refused, not run), `decision` and `rule` (M2b: the policy's verdict, when there is a policy, and the rule
 that gave it), `approved` (M2c: a person's answer, when one was asked), `queue_wait_ms` (M4b:
-the wait for a heavy-command slot, when there was one), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+the wait for a heavy-command slot, when there was one), `memory_limit`, `memory_enforced` and
+`peak_memory` (M5a: the ceiling asked for, whether it was enforced, and the tree's peak where
+known), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
 Run did not run gets its line too, with the reason; a command whose line cannot be opened is
 not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
 (`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,

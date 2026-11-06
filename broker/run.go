@@ -34,6 +34,16 @@ type Result struct {
 	OutputCut int64
 	// Waited is how long the command waited for a heavy-command slot (Command.Slots).
 	Waited time.Duration
+	// MemoryEnforced is true when Command.MemoryLimit was set and this platform enforced it;
+	// false with a limit set means the limit was not enforced here, and the command ran
+	// without it.
+	MemoryEnforced bool
+	// MemoryExceeded is true when the command's tree went over Command.MemoryLimit and was
+	// stopped.
+	MemoryExceeded bool
+	// PeakMemory is the most memory the whole tree held at once, in bytes, where the platform
+	// reports it (committed memory on Windows); 0 when it does not.
+	PeakMemory int64
 }
 
 // outputGrace is how long Run waits, once the tree is dead, for an output pipe that stays
@@ -224,7 +234,7 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 		return Result{}, false, err
 	}
 	start := time.Now()
-	t, err := tree.Start(cmd)
+	t, err := tree.StartLimited(cmd, uint64(c.MemoryLimit))
 	in.started()
 	out.started()
 	if err != nil {
@@ -279,7 +289,14 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 	if cmd.ProcessState != nil {
 		res.ExitCode, res.Signal = cmd.ProcessState.ExitCode(), signalOf(cmd.ProcessState)
 	}
-	if res.TimedOut || res.Canceled {
+	res.MemoryEnforced = c.MemoryLimit > 0 && t.MemoryEnforced()
+	exceeded, peak, memErr := t.FinalMemory()
+	res.MemoryExceeded, res.PeakMemory = exceeded, int64(peak)
+	if err := memErr; err != nil {
+		// The ceiling could not be watched, so the tree was stopped: say why.
+		errs = append(errs, fmt.Errorf("watch the memory ceiling: %w", err))
+	}
+	if res.TimedOut || res.Canceled || res.MemoryExceeded {
 		res.ExitCode, res.Signal = -1, ""
 	}
 	return res, true, errors.Join(errs...)

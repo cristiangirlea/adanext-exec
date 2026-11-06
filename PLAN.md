@@ -47,8 +47,14 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     2026-11-06.
   - [x] **M4c: classification.** Which commands are heavy, configurable, and their fair share
     (#15). Done: PR #53, 2026-11-07.
-- [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Windows
-  reuses M1a's Job Object and can start once M1a is in.
+- [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Done when
+  M5a to M5c are.
+  - [x] **M5a: the ceiling and Windows** (#50). `Command.MemoryLimit`, `run --memory`, exit 122,
+    the audit fields, and Windows' hard ceiling through the Job Object; the other platforms say
+    not enforced. Done: PR #54, 2026-11-07.
+  - [ ] **M5b: the watchdog** (#51). Polling the tree's memory on Linux and macOS.
+  - [ ] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
+    delegated.
 - [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell.
 - [ ] **M7: hrn.** harness's tools run shell commands through the SDK.
 - [ ] **M8: AdaNext OS.** `adad` runs task commands through the SDK.
@@ -57,6 +63,14 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M5 split into the ceiling and Windows (M5a), the watchdog on Linux and macOS
+  (M5b) and a delegated cgroup on Linux (M5c), one issue and PR each. M5a (PR #54, #50): a
+  limit a platform does not enforce is reported in the result, the audit and the binary, and
+  the command runs; it is not refused, since a ceiling is a protection for the machine, not a
+  rule about what may run. On Windows the job's own memory limit is the ceiling, and the broker
+  reads the job's peak (which counts a refused commit) to stop the tree once past it and to say
+  it was over; the job's completion-port notice is not used, since Windows does not promise it.
+  A peak that cannot be read stops the tree and is reported, never read as "not over".
 - 2026-11-07: M4c (PR #53, #15), which completes M4. Heavy commands are a built-in table read
   the way each tool reads its own command line (global flags and their values, wrappers,
   executors, shell substitutions), not regexes over the line, so arguments that name a tool are

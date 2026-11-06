@@ -34,6 +34,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	slots := flags.Bool("slots", false, "wait for one of the daemon's heavy-command slots first")
 	socket := flags.String("socket", "", "the daemon's socket (default: the user's state directory); implies --slots")
 	maxWait := flags.Duration("max-wait", 0, "give up after waiting this long for a slot (0: no limit)")
+	memory := flags.String("memory", "", "a ceiling on the memory of the command and all it starts: bytes, or with K, M or G")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -51,9 +52,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case *maxWait > 0 && !*slots && *socket == "":
 		return usageFail(stderr, "--max-wait needs --slots")
 	}
+	memoryLimit, err := parseSize(*memory)
+	if err != nil {
+		return usageFail(stderr, "--memory: "+err.Error())
+	}
 	c := broker.Command{
 		Stdin: stdin, Stdout: stdout, Stderr: stderr,
-		Timeout: *timeout, OutputCap: *outputCap,
+		Timeout: *timeout, OutputCap: *outputCap, MemoryLimit: memoryLimit,
 		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
 	}
 	switch {
@@ -128,14 +133,26 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return ExitCannotRun
 	}
+	if memoryLimit > 0 && !res.MemoryEnforced {
+		fmt.Fprintln(stderr, "adanext-exec: the memory ceiling is not enforced on this platform; the command ran without it")
+	}
+	return ranCode(res, err)
+}
+
+// ranCode is the exit code of a command that ran, given its result and Run's error: a lost slot,
+// then a failure after the run, then the ceiling, the timeout, an interruption and a signal,
+// and otherwise the command's own code.
+func ranCode(res broker.Result, err error) int {
 	switch {
 	case errors.Is(err, broker.ErrSlotLost):
 		// The daemon went away while the command held its slot, and the command was killed.
 		return ExitNoDaemon
 	case err != nil:
 		// It ran, but something after it failed: its output, its audit line, or killing what
-		// it left running. Its own code would hide that.
+		// it left running. Its own code would hide that, and so would the memory ceiling's.
 		return ExitBrokerFailed
+	case res.MemoryExceeded:
+		return ExitMemory
 	case res.TimedOut:
 		return ExitTimeout
 	case res.Canceled:

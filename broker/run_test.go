@@ -68,6 +68,27 @@ func TestHelperProcess(t *testing.T) {
 	case "cat":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 		os.Exit(0)
+	case "alloc":
+		// Takes and touches ADANEXT_TEST_ALLOC_MB of memory, then waits.
+		mb, _ := strconv.Atoi(os.Getenv("ADANEXT_TEST_ALLOC_MB"))
+		held := make([][]byte, 0, mb)
+		for range mb {
+			b := make([]byte, 1<<20)
+			for i := 0; i < len(b); i += 4096 {
+				b[i] = 1
+			}
+			held = append(held, b)
+		}
+		fmt.Fprint(os.Stdout, len(held))
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	case "alloc-child":
+		// A grandchild does the allocating: the ceiling is the whole tree's.
+		child := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
+		child.Env = append(os.Environ(), helperEnv+"=alloc")
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		_ = child.Run()
+		os.Exit(0)
 	case "env":
 		for _, kv := range os.Environ() {
 			fmt.Fprintln(os.Stdout, kv)
