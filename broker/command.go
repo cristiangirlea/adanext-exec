@@ -38,6 +38,13 @@ type Command struct {
 	// Timeout stops the command and kills its whole tree once it has run this long. Zero means
 	// no timeout of its own; the context passed to Run still applies.
 	Timeout time.Duration
+
+	// OutputCap bounds, in bytes, what reaches Stdout and what reaches Stderr (one stream when
+	// both are the same writer); zero means no cap. Its first two thirds pass through as the
+	// command writes them; the rest of the output is held, and once the command has ended its
+	// last third is written after a line that counts the bytes left out. Memory stays bounded by
+	// the cap whatever the command writes.
+	OutputCap int
 }
 
 // Shell names a shell that reads a Command's Script.
@@ -78,6 +85,9 @@ func invalid(format string, args ...any) error {
 func (c Command) cmd() (*exec.Cmd, error) {
 	if c.Timeout < 0 {
 		return nil, invalid("a negative timeout")
+	}
+	if c.OutputCap < 0 {
+		return nil, invalid("a negative output cap")
 	}
 	var cmd *exec.Cmd
 	switch {

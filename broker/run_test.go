@@ -80,6 +80,17 @@ func TestHelperProcess(t *testing.T) {
 		dir, _ := os.Getwd()
 		fmt.Print(dir)
 		os.Exit(0)
+	case "spew":
+		// Writes ADANEXT_TEST_OUT bytes of digits to stdout and ADANEXT_TEST_ERR bytes of
+		// letters to stderr, then waits ADANEXT_TEST_WAIT.
+		n, _ := strconv.Atoi(os.Getenv("ADANEXT_TEST_OUT"))
+		m, _ := strconv.Atoi(os.Getenv("ADANEXT_TEST_ERR"))
+		_, _ = os.Stdout.Write([]byte(digits(n)))
+		_, _ = os.Stderr.Write([]byte(letters(m)))
+		if d, err := time.ParseDuration(os.Getenv("ADANEXT_TEST_WAIT")); err == nil {
+			time.Sleep(d)
+		}
+		os.Exit(0)
 	case "chunks":
 		fmt.Print("first")
 		time.Sleep(300 * time.Millisecond)
@@ -497,6 +508,7 @@ func TestRunRefusesAnInvalidCommand(t *testing.T) {
 		"shell, no script": {Shell: ShellBash},
 		"unknown shell":    {Shell: "zsh", Script: "echo"},
 		"negative timeout": {Args: []string{os.Args[0]}, Timeout: -time.Second},
+		"negative cap":     {Args: []string{os.Args[0]}, OutputCap: -1},
 		"other os's shell": {Shell: otherPlatformShell, Script: "echo"},
 	} {
 		t.Run(name, func(t *testing.T) {

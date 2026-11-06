@@ -93,6 +93,10 @@ Per command:
 - **Timeout**, then a whole-tree kill (below).
 - **Memory ceiling** for the command and everything it starts.
 - **Output cap** (head and tail kept, the middle counted), as harness's bounded buffer does.
+  `Command.OutputCap` bounds each stream (stdout and stderr, or one stream when both go to the
+  same writer): its first two thirds pass through as the command writes them, the rest is held,
+  and once the command has ended the last third is written after a line counting the bytes
+  left out (`[... N bytes cut ...]`). `Result.OutputCut` carries the count for the audit.
 
 Across commands (daemon):
 
