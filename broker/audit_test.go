@@ -21,9 +21,6 @@ func readAudit(t *testing.T, dir string) []map[string]any {
 	if err != nil || len(files) != 1 {
 		t.Fatalf("audit files %v (%v), want one", files, err)
 	}
-	if want := time.Now().UTC().Format("2006-01-02") + ".jsonl"; filepath.Base(files[0]) != want {
-		t.Fatalf("audit file %s, want %s", filepath.Base(files[0]), want)
-	}
 	f, err := os.Open(files[0])
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +36,24 @@ func readAudit(t *testing.T, dir string) []map[string]any {
 		}
 		lines = append(lines, m)
 	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
 	return lines
+}
+
+// auditBytes is the content of the audit's only file.
+func auditBytes(t *testing.T, dir string) []byte {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("audit files %v (%v), want one", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func TestRunWritesOneAuditLinePerCommand(t *testing.T) {
@@ -77,7 +91,8 @@ func TestRunWritesOneAuditLinePerCommand(t *testing.T) {
 		t.Fatal("the environment was written")
 	}
 	if runtime.GOOS != "windows" {
-		info, err := os.Stat(filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl"))
+		files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+		info, err := os.Stat(files[0])
 		dinfo, derr := os.Stat(dir)
 		if err != nil || derr != nil || info.Mode().Perm() != 0o600 || dinfo.Mode().Perm() != 0o700 {
 			t.Fatalf("file mode %v, directory mode %v (%v, %v); want 0600 and 0700", info.Mode(), dinfo.Mode(), err, derr)
@@ -99,17 +114,24 @@ func TestTheAuditTakesSecretsOut(t *testing.T) {
 	if _, err := Run(context.Background(), script); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err %v, want the other platform's shell refused", err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	odd := Command{Shell: "TOKEN=plain-secret-7", Script: "x", Audit: &Audit{Dir: dir}, Caller: Caller{Agent: "API_KEY=plain-secret-8"}}
+	if _, err := Run(context.Background(), odd); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err %v, want an unknown shell refused", err)
 	}
-	for _, secret := range []string{"plain-secret-1", "plain-secret-2", "plain-secret-3", "plain-secret-4", "plain-secret-5", "plain-secret-6", fromEnv} {
+	missing := helper("exit")
+	missing.Dir = filepath.Join(t.TempDir(), "PASSWORD=plain-secret-9") // does not exist: the start fails and its error quotes the path
+	missing.Audit = &Audit{Dir: dir}
+	if _, err := Run(context.Background(), missing); err == nil {
+		t.Fatal("started in a missing directory")
+	}
+	data := auditBytes(t, dir)
+	for _, secret := range []string{"plain-secret-1", "plain-secret-2", "plain-secret-3", "plain-secret-4", "plain-secret-5", "plain-secret-6", "plain-secret-7", "plain-secret-8", "plain-secret-9", fromEnv} {
 		if strings.Contains(string(data), secret) {
 			t.Errorf("the audit holds %q", secret)
 		}
 	}
-	if strings.Count(string(data), "[redacted]") < 7 {
-		t.Fatalf("audit %s, want seven redactions", data)
+	if strings.Count(string(data), "[redacted]") < 11 {
+		t.Fatalf("audit %s, want eleven redactions", data)
 	}
 }
 
@@ -151,14 +173,24 @@ func TestACommandWhoseAuditCannotBeOpenedIsNotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(t.TempDir(), "ran")
-	c := helper("args")
-	c.Dir = marker // a missing directory would fail the start; the audit must fail first
+	c := helper("touch", "ADANEXT_TEST_MARKER="+marker)
 	for _, a := range []*Audit{{Dir: notADir}, {Dir: ""}} {
 		c.Audit = a
 		res, err := Run(context.Background(), c)
 		if !errors.Is(err, ErrAudit) || res != (Result{}) {
 			t.Fatalf("audit %q: %+v, %v; want ErrAudit and nothing run", a.Dir, res, err)
 		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatalf("audit %q: the command ran", a.Dir)
+		}
+	}
+	// The helper does write its marker when nothing stops it.
+	c.Audit = nil
+	if _, err := Run(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the helper wrote no marker: %v", err)
 	}
 }
 

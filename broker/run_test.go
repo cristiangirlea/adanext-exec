@@ -91,6 +91,22 @@ func TestHelperProcess(t *testing.T) {
 			time.Sleep(d)
 		}
 		os.Exit(0)
+	case "touch":
+		if err := os.WriteFile(os.Getenv("ADANEXT_TEST_MARKER"), nil, 0o600); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	case "audit-writer":
+		// Runs five commands under one audit directory, as one of several processes.
+		for i := 0; i < 5; i++ {
+			c := helper("exit")
+			c.Audit = &Audit{Dir: os.Getenv("ADANEXT_TEST_AUDIT")}
+			if _, err := Run(context.Background(), c); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+		}
+		os.Exit(0)
 	case "chunks":
 		fmt.Print("first")
 		time.Sleep(300 * time.Millisecond)

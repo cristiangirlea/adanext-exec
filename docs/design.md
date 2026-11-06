@@ -192,9 +192,16 @@ processes can share a file.
 
 Redaction is best effort (#14). It takes out what it recognises: `NAME=value` pairs whose name
 looks secret, credential flags (also when the value is the next argument), auth headers, URL
-passwords, known token formats and private keys (the rules come from harness), and the values of
-secret-named variables in the command's environment wherever they appear. A secret of another
-shape is written as given. Until M2's policy brings its secret list, these are the audit's own
+passwords, known token formats and private keys (the rules come from harness), and, wherever
+they appear, the values of variables in the command's environment whose names hold KEY, TOKEN,
+SECRET, PASSWORD, PASSWD or CREDENTIAL or end in `_PWD` or `_PASS`, when the value is 12
+characters or longer (shorter ones would blank ordinary words). The environment is the one the
+command starts with. A secret of another shape, or a short one passed on its own, is written as
+given.
+
+The audit file must be a regular file: a link or a special file (a device, a pipe) at its name
+is refused, and so is the command. On Linux and macOS the directory and the file must be the
+user's own, and any access for the group or others is taken away before the command runs. Until M2's policy brings its secret list, these are the audit's own
 rules; then the two share them.
 
 What the audit cannot promise (#13, #14):

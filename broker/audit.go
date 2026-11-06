@@ -76,12 +76,37 @@ func (a *Audit) open(at time.Time) (*auditFile, error) {
 	if err := os.MkdirAll(a.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrAudit, err)
 	}
+	if err := ownerOnly(a.Dir, 0o700); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAudit, err)
+	}
 	name := filepath.Join(a.Dir, at.UTC().Format("2006-01-02")+".jsonl")
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	// A link or a special file (a device, a pipe) at the name would take the lines elsewhere
+	// or block; only a regular file is an audit.
+	if fi, err := os.Lstat(name); err == nil && !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", ErrAudit, name)
+	}
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE|openNoFollow, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrAudit, err)
 	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", name)
+	}
+	if err == nil {
+		err = ownerOnly(name, 0o600)
+	}
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("%w: %v", ErrAudit, err)
+	}
 	return &auditFile{a: a, f: f}, nil
+}
+
+// auditWrite appends a line; tests replace it.
+var auditWrite = func(f *os.File, line []byte) error {
+	_, err := f.Write(line)
+	return err
 }
 
 // write appends the line and closes the file.
@@ -93,7 +118,7 @@ func (af *auditFile) write(rec auditRecord) error {
 	}
 	af.a.mu.Lock()
 	defer af.a.mu.Unlock()
-	if _, err := af.f.Write(append(line, '\n')); err != nil {
+	if err := auditWrite(af.f, append(line, '\n')); err != nil {
 		return fmt.Errorf("%w: %v", ErrAudit, err)
 	}
 	return nil
@@ -115,25 +140,22 @@ type auditRecord struct {
 	Error      string   `json:"error,omitempty"`
 }
 
+// snapshot is what the audit reads of the caller's state, taken before the command starts.
+type snapshot struct {
+	env []string
+	dir string
+}
+
 // record describes the command, as given and as it ended, with secrets taken out.
-func (c Command) record(begin time.Time, res Result, ran bool, err error) auditRecord {
-	env := c.Env
-	if env == nil {
-		env = os.Environ()
-	}
-	clean := cleaner(env)
+func (c Command) record(snap snapshot, begin time.Time, res Result, ran bool, err error) auditRecord {
+	clean := cleaner(snap.env)
 	rec := auditRecord{
 		Time:       begin.UTC().Format(time.RFC3339Nano),
-		Dir:        clean(c.Dir),
-		Shell:      string(c.Shell),
+		Dir:        clean(snap.dir),
+		Shell:      clean(string(c.Shell)),
 		Script:     clean(c.Script),
 		DurationMS: res.Duration.Milliseconds(),
 		OutputCut:  res.OutputCut,
-	}
-	if rec.Dir == "" {
-		if wd, werr := os.Getwd(); werr == nil {
-			rec.Dir = clean(wd)
-		}
 	}
 	for i, a := range c.Args {
 		if i > 0 && takesSecret(c.Args[i-1]) {

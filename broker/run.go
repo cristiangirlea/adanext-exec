@@ -67,23 +67,37 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // The console's Ctrl+C reaches the command as it reaches the caller. A caller that wants to
 // report after one handles os.Interrupt and cancels ctx: Run then kills the tree and returns.
 func Run(ctx context.Context, c Command) (Result, error) {
-	begin := time.Now()
+	begin := now()
 	var log *auditFile
+	var snap snapshot
 	if c.Audit != nil {
 		f, err := c.Audit.open(begin)
 		if err != nil {
 			return Result{}, err
 		}
 		log = f
+		// Taken before the command starts: the environment it runs with, which the audit's
+		// redaction reads, and the working directory it inherits.
+		snap = snapshot{env: c.Env, dir: c.Dir}
+		if snap.env == nil {
+			snap.env = os.Environ()
+			c.Env = snap.env
+		}
+		if snap.dir == "" {
+			snap.dir, _ = os.Getwd()
+		}
 	}
 	res, ran, err := run(ctx, c)
 	if log != nil {
-		if aerr := log.write(c.record(begin, res, ran, err)); aerr != nil {
+		if aerr := log.write(c.record(snap, begin, res, ran, err)); aerr != nil {
 			err = errors.Join(err, aerr)
 		}
 	}
 	return res, err
 }
+
+// now is the clock Run reads its start from; tests replace it.
+var now = time.Now
 
 // run is Run without the audit; ran says whether the command started.
 func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
