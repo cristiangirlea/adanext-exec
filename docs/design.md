@@ -117,7 +117,11 @@ its commands. A job that cannot be made or assigned means the command is killed 
 suspended and refused. On Unix the group's leader is waited for without being reaped
 (`waitid` with `WNOWAIT`) until the group has been killed, so its id cannot pass to another
 process first. macOS refuses a signal to a group of zombies with EPERM; the broker then
-reads the process table and counts such a group as gone. A descendant that calls `setsid` or `setpgid` leaves the group (M1b).
+reads the process table and counts such a group as gone. It reads the table twice and counts the group gone
+only if neither read shows a live member. macOS has no atomic listing, so this narrows but does
+not close one race: a member the user cannot signal (another user's, as under `sudo`) that forks
+and exits during both reads could hide a live child, and the refusal would go unreported. Such
+a process could not have been killed either way. A descendant that calls `setsid` or `setpgid` leaves the group (M1b).
 
 The console's Ctrl+C reaches the command and its caller alike. The SDK does not change console
 groups: a caller that must report after Ctrl+C handles the interrupt and cancels the context,
