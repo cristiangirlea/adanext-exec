@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -25,6 +26,12 @@ const (
 	kinfoPID       = 40  // kp_proc.p_pid
 	kinfoPPID      = 560 // kp_eproc.e_ppid
 )
+
+// clockBound is a start time, in the microseconds of p_starttime, a second before now: no
+// process started after this call can show an earlier one.
+func clockBound() (uint64, error) {
+	return uint64(time.Now().Add(-time.Second).UnixMicro()), nil
+}
 
 // listProcs reads the process table from kern.proc.all.
 func listProcs() ([]proc, error) {

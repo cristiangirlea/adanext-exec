@@ -36,6 +36,26 @@ func startCmd(t *Tree, cmd *exec.Cmd) error {
 	return nil
 }
 
+// clockBound is a start time, in the clock ticks of /proc/<pid>/stat, a second before now: no
+// process started after this call can show an earlier one. It reads the time since boot from
+// /proc/uptime and counts USER_HZ ticks, which Linux fixes at 100 for user space on the
+// architectures Go supports.
+func clockBound() (uint64, error) {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	f := strings.Fields(string(data))
+	if len(f) == 0 {
+		return 0, errors.New("empty /proc/uptime")
+	}
+	up, err := strconv.ParseFloat(f[0], 64)
+	if err != nil || up < 0 {
+		return 0, fmt.Errorf("read /proc/uptime: %q", f[0])
+	}
+	return uint64(max(up-1, 0) * 100), nil
+}
+
 // listProcs reads the process table from /proc.
 func listProcs() ([]proc, error) {
 	entries, err := os.ReadDir("/proc")
