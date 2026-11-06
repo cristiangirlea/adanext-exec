@@ -131,14 +131,19 @@ beside it. To kill the tree, the broker reads the process table (`/proc` on Linu
 environment into a buffer of `kern.argmax` bytes, about 1 MiB; only processes that started after
 the command are read) and kills the group, every process of the user's
 that carries the marker, and every descendant of either by its parent link, scanning again until
-a scan finds none. Nothing that started before the command's own process is taken, and a
-parent link is followed only to a child no older than its parent. On Linux a process is pinned
+a scan finds none. Nothing that started before the tree's bound is taken (the command's own
+start time, or a second before the command was started), and a parent link is followed only to a
+child no older than its parent. On Linux a process is pinned
 with a pidfd and its start time checked before the signal (before Linux 5.3, without pidfds,
 the check comes just before the signal); on macOS the table is read again and the start time
 checked just before the signal, which leaves a short window for a reused pid. The bound on
 start times comes from the clock just before the command starts, a second early, and narrows to
 the command's own start time when that can be read (a caller that ignores SIGCHLD can have it
-reaped first). Only if neither can be read is only the group killed, and the error says so. The marker shows
+reaped first). Only if neither can be read is only the group killed, and the error says so. On
+macOS start times follow the wall clock, which has no monotonic per-process alternative there:
+a clock stepped back by more than a second after the bound is taken can make the tree's later
+processes look older than it, and the sweep then misses those that left the group. Linux counts
+from boot and is not affected. The marker shows
 which tree a process came from; it is not proof: a process the user starts after the command
 and gives the marker on purpose is killed with the tree. What still escapes: a
 process that both clears its environment and is orphaned before the kill (a double-forking

@@ -49,6 +49,9 @@ Newest first.
   (its caller ignoring SIGCHLD) left the tree with no bound, so Kill refused to kill anything
   and a marked descendant survived; CI caught it as a flaky test. The bound now comes from the
   clock before the start, narrowed to the leader's own start time when it can be read.
+  On macOS both bounds follow the wall clock (no monotonic start time is readable there), so a
+  backward step of more than a second can hide escaped processes from the sweep; accepted and
+  written in the design, as the leader's own start time already had that limit.
 - 2026-11-06: M1b (PR #28). A process that leaves the group is found by a marker in the
   environment, the technique of build servers' process-tree killers, and by parent links at
   kill time, instead of `PR_SET_CHILD_SUBREAPER` (#10): a subreaper changes the whole caller,
