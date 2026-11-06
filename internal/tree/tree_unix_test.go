@@ -3,6 +3,7 @@
 package tree
 
 import (
+	"errors"
 	"syscall"
 	"testing"
 )
@@ -13,9 +14,9 @@ func TestWaitExitLeavesTheLeaderUnreapedSoItsGroupIdIsHeld(t *testing.T) {
 	if err := tr.WaitExit(); err != nil {
 		t.Fatal(err)
 	}
-	// The leader has exited but is not reaped: its group still answers, so a Kill now cannot
-	// reach a process that took the id over.
-	if err := syscall.Kill(-cmd.Process.Pid, 0); err != nil {
+	// The leader has exited but is not reaped: its group still exists, so a Kill now cannot
+	// reach a process that took the id over. macOS answers EPERM for a group of zombies.
+	if err := syscall.Kill(-cmd.Process.Pid, 0); errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("the group of the exited leader: %v, want it held until Wait", err)
 	}
 	if err := tr.Kill(); err != nil {
