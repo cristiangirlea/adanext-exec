@@ -151,6 +151,19 @@ func readIdentity(t *testing.T, file string) identity {
 	return identity{}
 }
 
+// watch has every process recorded in files killed at cleanup, whatever the test reached.
+// Register it before starting the helpers that write the records.
+func watch(t *testing.T, files ...string) {
+	t.Cleanup(func() {
+		for _, f := range files {
+			var id identity
+			if data, err := os.ReadFile(f); err == nil && json.Unmarshal(data, &id) == nil && id.PID > 0 {
+				killIfSame(id)
+			}
+		}
+	})
+}
+
 // track kills the process at cleanup if it is still the same process.
 func track(t *testing.T, id identity) {
 	t.Cleanup(func() { killIfSame(id) })
@@ -536,6 +549,7 @@ func TestRunWhenItsCallerIsKilled(t *testing.T) {
 	t.Log(why)
 	dir := t.TempDir()
 	childFile, leaderFile := filepath.Join(dir, "child.json"), filepath.Join(dir, "leader.json")
+	watch(t, childFile, leaderFile)
 	host := helper("host", "ADANEXT_TEST_PID_FILE="+childFile, "ADANEXT_TEST_LEADER_FILE="+leaderFile).cmdForTest()
 	if err := host.Start(); err != nil {
 		t.Fatal(err)
@@ -565,6 +579,7 @@ func TestRunWhenItsCallerIsKilled(t *testing.T) {
 func TestRunLeavesAnotherTreeAlone(t *testing.T) {
 	dir := t.TempDir()
 	keptFile, doneFile := filepath.Join(dir, "kept.json"), filepath.Join(dir, "done.json")
+	watch(t, keptFile, doneFile)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	kept := helper("parent", "ADANEXT_TEST_PID_FILE="+keptFile)
@@ -592,6 +607,7 @@ func TestRunKillsTheTreeOfABrokerItRuns(t *testing.T) {
 	// with it.
 	dir := t.TempDir()
 	childFile, leaderFile := filepath.Join(dir, "child.json"), filepath.Join(dir, "leader.json")
+	watch(t, childFile, leaderFile)
 	c := helper("host", "ADANEXT_TEST_PID_FILE="+childFile, "ADANEXT_TEST_LEADER_FILE="+leaderFile)
 	c.Timeout = 3 * time.Second
 	res, err := Run(context.Background(), c)

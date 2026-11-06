@@ -82,7 +82,14 @@ func readEnv(pid int) ([]byte, error) {
 // scanned (its start time). macOS has no pidfd: the pid could still be reused between that
 // read and the signal.
 func killProc(p proc) error {
-	if q, err := findProc(p.pid); err != nil || q.start != p.start || q.zombie {
+	q, err := findProc(p.pid)
+	if errors.Is(err, errNoProc) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check process %d before the signal: %w", p.pid, err)
+	}
+	if q.start != p.start || q.zombie {
 		return nil // gone, or the pid now names another process
 	}
 	if err := syscall.Kill(p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {

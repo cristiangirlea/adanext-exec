@@ -86,6 +86,31 @@ func readEnv(pid int) ([]byte, error) {
 	return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
 }
 
+// sameStart reports whether the pid still names the process scanned. A process that is gone
+// is not an error; a stat that cannot be read for another reason is.
+func sameStart(p proc) (bool, error) {
+	q, err := readStat(p.pid)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check process %d before the signal: %w", p.pid, err)
+	}
+	return q.start == p.start, nil
+}
+
+// killByStat is the signal without a pidfd (before Linux 5.3): the start time is checked just
+// before the signal, which leaves the pid open to reuse between the two.
+func killByStat(p proc) error {
+	if same, err := sameStart(p); err != nil || !same {
+		return err
+	}
+	if err := syscall.Kill(p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill process %d: %w", p.pid, err)
+	}
+	return nil
+}
+
 // killProc pins the process with a pidfd, checks it is still the one scanned (its start time),
 // and signals through the pidfd, so a reused pid is never signalled.
 func killProc(p proc) error {
@@ -95,21 +120,13 @@ func killProc(p proc) error {
 	case syscall.ESRCH:
 		return nil
 	case syscall.ENOSYS:
-		// Before Linux 5.3: the start time is checked just before the signal instead, which
-		// leaves the pid open to reuse between the two.
-		if q, err := readStat(p.pid); err != nil || q.start != p.start {
-			return nil
-		}
-		if err := syscall.Kill(p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("kill process %d: %w", p.pid, err)
-		}
-		return nil
+		return killByStat(p)
 	default:
 		return fmt.Errorf("open process %d: %w", p.pid, errno)
 	}
 	defer syscall.Close(int(fd))
-	if q, err := readStat(p.pid); err != nil || q.start != p.start {
-		return nil // gone, or the pid now names another process
+	if same, err := sameStart(p); err != nil || !same {
+		return err // nil when gone, or when the pid now names another process
 	}
 	if _, _, errno := syscall.Syscall6(sysPidfdSendSignal, fd, uintptr(syscall.SIGKILL), 0, 0, 0, 0); errno != 0 && errno != syscall.ESRCH {
 		return fmt.Errorf("kill process %d: %w", p.pid, errno)

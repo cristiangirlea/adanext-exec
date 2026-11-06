@@ -69,6 +69,15 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	return t, nil
 }
 
+// The process table and the signal, as Kill uses them; tests replace them.
+var (
+	scanProcs = listProcs
+	signal    = killProc
+)
+
+// errNoProc means the pid is not in the process table: the process is gone.
+var errNoProc = errors.New("not in the process table")
+
 // findProc reads one process from the table.
 func findProc(pid int) (proc, error) {
 	procs, err := listProcs()
@@ -80,7 +89,7 @@ func findProc(pid int) (proc, error) {
 			return p, nil
 		}
 	}
-	return proc{}, fmt.Errorf("process %d is not in the process table", pid)
+	return proc{}, fmt.Errorf("process %d: %w", pid, errNoProc)
 }
 
 const pPID = 1 // idtype_t P_PID, the same on Linux and macOS
@@ -143,7 +152,7 @@ func (t *Tree) Kill() error {
 	// still followed.
 	signalled := make(map[int]uint64)
 	for round := 0; round < maxSweeps; round++ {
-		procs, err := listProcs()
+		procs, err := scanProcs()
 		if err != nil {
 			// The group can still be killed; what left it cannot be found.
 			if byGroup {
@@ -168,8 +177,10 @@ func (t *Tree) Kill() error {
 		}
 		var killErrs []error
 		for _, p := range fresh {
-			if err := killProc(p); err != nil {
+			// Only a process signalled, or seen to be gone, counts as done.
+			if err := signal(p); err != nil {
 				killErrs = append(killErrs, err)
+				continue
 			}
 			signalled[p.pid] = p.start
 		}

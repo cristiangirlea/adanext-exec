@@ -86,6 +86,7 @@ func helperPlatform(mode string) {
 
 func TestRunKillsAnOrphanThatLeftTheGroup(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "id.json")
+	watch(t, file)
 	c := helper("escapee", "ADANEXT_TEST_PID_FILE="+file)
 	c.Timeout = time.Minute
 	res, err := Run(context.Background(), c)
@@ -102,6 +103,7 @@ func TestRunKillsAnOrphanThatLeftTheGroup(t *testing.T) {
 func TestRunKillsADescendantThatLeftTheGroupAndDroppedTheMarker(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "id.json")
 	middleFile := filepath.Join(t.TempDir(), "middle.json")
+	watch(t, file, middleFile)
 	c := helper("middle-keeper", "ADANEXT_TEST_PID_FILE="+file, "ADANEXT_TEST_MIDDLE_FILE="+middleFile)
 	c.Timeout = 3 * time.Second
 	res, err := Run(context.Background(), c)
@@ -118,6 +120,7 @@ func TestRunKillsADescendantThatLeftTheGroupAndDroppedTheMarker(t *testing.T) {
 
 func TestRunReportsOutputHeldByAnOrphanItCannotFind(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "id.json")
+	watch(t, file)
 	c := helper("clean-orphaner", "ADANEXT_TEST_PID_FILE="+file)
 	c.Timeout = time.Minute
 	start := time.Now()
@@ -147,6 +150,7 @@ func TestRunReportsASignalFromElsewhere(t *testing.T) {
 func TestRunNeverSignalsAGroupWhoseLeaderWasReapedElsewhere(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "id.json")
 	var out strings.Builder
+	watch(t, file)
 	cmd := helper("echild", "ADANEXT_TEST_PID_FILE="+file).cmdForTest()
 	cmd.Stdout = &out
 	err := cmd.Run()

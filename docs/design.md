@@ -127,7 +127,9 @@ A descendant that calls `setsid` or `setpgid` leaves the group (M1b). Each tree 
 carries a marker, an environment variable whose name holds the tree's random id
 (`ADANEXT_EXEC_TREE_<id>=1`), which every descendant inherits; nested brokers add their own
 beside it. To kill the tree, the broker reads the process table (`/proc` on Linux,
-`kern.proc.all` and `KERN_PROCARGS2` on macOS) and kills the group, every process of the user's
+`kern.proc.all` and `KERN_PROCARGS2` on macOS, which reads each candidate's arguments and
+environment into a buffer of `kern.argmax` bytes, about 1 MiB; only processes that started after
+the command are read) and kills the group, every process of the user's
 that carries the marker, and every descendant of either by its parent link, scanning again until
 a scan finds none. Nothing that started before the command's own process is taken, and a
 parent link is followed only to a child no older than its parent. On Linux a process is pinned
