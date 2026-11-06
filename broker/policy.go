@@ -92,6 +92,8 @@ type Policy struct {
 	builtin map[string]Decision
 	rules   []policyRule
 	def     Decision
+	// err is why the policy could not be read, kept so that what refuses says why.
+	err error
 }
 
 type policyRule struct {
@@ -146,12 +148,12 @@ func DefaultPolicy() *Policy {
 // "match" is the policy's own, a regular expression (Go's syntax) tested against the command
 // line. "default" decides a command no rule matches; it is allow when left out. Anything else,
 // an unknown field, a name used twice, a decision that is not allow, ask or refuse, or a match
-// that does not compile, is an error (ErrPolicy). With an error comes a zero Policy, which
-// refuses every command, so a caller that misses the error still runs nothing.
+// that does not compile, is an error (ErrPolicy). With an error comes a Policy that refuses
+// every command with that error, so a caller that misses the error still runs nothing.
 func ParsePolicy(data []byte) (*Policy, error) {
 	p, err := parsePolicy(data)
 	if err != nil {
-		return &Policy{}, err
+		return &Policy{err: err}, err
 	}
 	return p, nil
 }
@@ -214,11 +216,11 @@ func parsePolicy(data []byte) (*Policy, error) {
 // LoadPolicy reads a policy file (see ParsePolicy). On Linux and macOS the file must be the
 // user's own and writable by no one else, since whoever can change it decides what runs; on
 // Windows its access list decides, as for the audit. A link is followed: what is checked is the
-// file opened. With an error comes a zero Policy, as from ParsePolicy.
+// file opened. With an error comes a Policy that refuses with it, as from ParsePolicy.
 func LoadPolicy(path string) (*Policy, error) {
 	p, err := loadPolicy(path)
 	if err != nil {
-		return &Policy{}, err
+		return &Policy{err: err}, err
 	}
 	return p, nil
 }
@@ -253,6 +255,9 @@ func loadPolicy(path string) (*Policy, error) {
 // Check judges a command without running it. An error means the policy cannot judge it (a
 // zero Policy), and the command must not run.
 func (p *Policy) Check(c Command) (Verdict, error) {
+	if p != nil && p.err != nil {
+		return Verdict{}, p.err
+	}
 	if p == nil || p.builtin == nil {
 		return Verdict{}, fmt.Errorf("%w: not loaded", ErrPolicy)
 	}

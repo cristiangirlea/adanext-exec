@@ -43,9 +43,10 @@ func TestAPolicyThatIsNotValidIsAnError(t *testing.T) {
 		if !errors.Is(err, ErrPolicy) {
 			t.Errorf("%s: ParsePolicy(%s) = %v, want ErrPolicy", name, text, err)
 		}
-		// What comes with the error refuses everything, should the caller miss the error.
-		if _, err := p.Check(Command{Args: []string{"ls"}}); p == nil || !errors.Is(err, ErrPolicy) {
-			t.Errorf("%s: the Policy returned with the error judged a command: %v", name, err)
+		// What comes with the error refuses everything, with the same reason, should the caller
+		// miss the error.
+		if _, checkErr := p.Check(Command{Args: []string{"ls"}}); p == nil || checkErr == nil || err == nil || checkErr.Error() != err.Error() {
+			t.Errorf("%s: the Policy returned with %v judged a command: %v", name, err, checkErr)
 		}
 	}
 }

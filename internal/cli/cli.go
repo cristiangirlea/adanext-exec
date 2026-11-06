@@ -1,0 +1,71 @@
+// Package cli is the adanext-exec binary: its subcommands, flags and exit codes. The binary's
+// main only hands it the process's arguments, streams and a context that ends on Ctrl+C.
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+)
+
+// The exit codes the binary itself gives, documented in docs/protocol.md. Any other code is the
+// command's own. A command that exits with one of these codes by itself cannot be told from the
+// binary's; a caller that must tell reads the audit line.
+const (
+	// ExitBrokerFailed: the command ran, but something after it failed: writing its output,
+	// writing its audit line, or killing what it left running.
+	ExitBrokerFailed = 120
+	// ExitUsage: the arguments are not valid.
+	ExitUsage = 121
+	// ExitMemory is reserved for the memory ceiling (M5).
+	ExitMemory = 122
+	// ExitNoDaemon is reserved for a missing daemon (M4).
+	ExitNoDaemon = 123
+	// ExitTimeout: the command ran past its timeout, and its tree was killed.
+	ExitTimeout = 124
+	// ExitRefused: the policy refused the command, answered ask with no approval, or could not
+	// be used; the command did not run.
+	ExitRefused = 125
+	// ExitCannotRun: the command did not run: it could not start, be contained or be audited,
+	// or the binary runs elevated.
+	ExitCannotRun = 126
+	// ExitNotFound: the program or the shell was not found.
+	ExitNotFound = 127
+	// ExitSignal plus the signal's number: the command was ended by a signal (Unix).
+	ExitSignal = 128
+	// ExitInterrupted: the binary was interrupted (Ctrl+C), and the command's tree was killed.
+	ExitInterrupted = 130
+)
+
+const usage = `usage:
+  adanext-exec run [flags] -- <program> [args...]
+  adanext-exec run [flags] --shell <name> -- <script>
+
+Run "adanext-exec run -h" for the flags.
+`
+
+// Main runs the binary with its arguments (the program name left out) and returns the exit code.
+func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
+	if isElevated() {
+		fmt.Fprintln(stderr, "adanext-exec: refusing to run as root or an elevated administrator")
+		return ExitCannotRun
+	}
+	switch args[0] {
+	case "run":
+		return run(ctx, args[1:], stdin, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "adanext-exec: unknown command %q\n%s", args[0], usage)
+	return ExitUsage
+}
+
+// isElevated reports whether the binary runs as root or an elevated administrator; tests replace it.
+var isElevated = elevated
