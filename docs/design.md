@@ -182,6 +182,40 @@ queue wait, duration, exit code or signal, peak memory where the platform report
 whether output was cut. Secrets are redacted with the same rules as the policy's secret list
 before anything is written. Nothing leaves the machine.
 
+M1d delivers the line through `broker.Command.Audit`, with the fields there are so far (the
+decision, the queue wait and peak memory arrive with M2, M4 and M5): `time` (the start, UTC),
+`caller`, `dir`, `args` or `shell` and `script`, `outcome` (exited, signalled, timed out,
+cancelled, not run), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+Run did not run gets its line too, with the reason; a command whose line cannot be opened is
+not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
+(`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,
+`%LocalAppData%` on Windows) under `adanext-exec/audit`. Each line is one append, so several
+processes can share a file.
+
+Redaction is best effort (#14). It takes out what it recognises: `NAME=value` pairs whose name
+looks secret, credential flags (also when the value is the next argument), auth headers, URL
+passwords, known token formats and private keys (the rules come from harness), and, wherever
+they appear, the values of variables in the command's environment whose names hold KEY, TOKEN,
+SECRET, PASSWORD, PASSWD or CREDENTIAL or end in `_PWD` or `_PASS`, when the value is 12
+characters or longer (shorter ones would blank ordinary words). The environment is the one the
+command starts with. A secret of another shape, or a short one passed on its own, is written as
+given.
+
+The audit file must be a regular file: a link or a special file (a device, a pipe) at its name
+is refused, and so is the command. On Linux and macOS the directory and the file must be the
+user's own, and any access for the group or others is taken away before the command runs. Until M2's policy brings its secret list, these are the audit's own
+rules; then the two share them.
+
+What the audit cannot promise (#13, #14):
+
+- The environment passes through to the command unchanged and is never written to the audit.
+- The working directory is recorded, not confined: a command can read and write anywhere the
+  user can.
+- The caller is whatever the caller says it is; nothing checks it.
+- The audit lives in the user's own directory, owner-only where the platform has file modes
+  (not on Windows, where it takes the directory's access list). The same user can change or
+  delete it: it is a record, not tamper-evident.
+
 ## Transport and trust
 
 - The daemon listens on a Unix domain socket (Go supports AF_UNIX on Windows 10 1803 and

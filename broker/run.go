@@ -61,15 +61,62 @@ var errOutputHeld = errors.New("a process outside the command's tree held its ou
 // does not wait for a Read from Stdin: once the command has ended, a Read that is still blocked
 // is left to return on its own, and what it returns is dropped.
 //
+// With Command.Audit set, Run writes one line for the command, also for one it did not run,
+// and refuses to run a command whose line it cannot open (ErrAudit).
+//
 // The console's Ctrl+C reaches the command as it reaches the caller. A caller that wants to
 // report after one handles os.Interrupt and cancels ctx: Run then kills the tree and returns.
 func Run(ctx context.Context, c Command) (Result, error) {
+	begin := now()
+	var log *auditFile
+	var snap snapshot
+	if c.Audit != nil {
+		f, err := c.Audit.open(begin)
+		if err != nil {
+			return Result{}, err
+		}
+		log = f
+		// Taken before the command starts: the environment it runs with, which the audit's
+		// redaction reads, and the working directory it inherits.
+		snap = snapshot{env: c.Env, dir: c.Dir}
+		if snap.env == nil {
+			snap.env = os.Environ()
+			c.Env = snap.env
+		}
+		if snap.dir == "" {
+			wd, err := getwd()
+			if err != nil {
+				log.f.Close()
+				return Result{}, fmt.Errorf("%w: read the working directory to record: %v", ErrAudit, err)
+			}
+			// The command runs where the audit says, whatever the caller's directory becomes.
+			snap.dir, c.Dir = wd, wd
+		}
+	}
+	res, ran, err := run(ctx, c)
+	if log != nil {
+		if aerr := log.write(c.record(snap, begin, res, ran, err)); aerr != nil {
+			err = errors.Join(err, aerr)
+		}
+	}
+	return res, err
+}
+
+// now is the clock Run reads its start from, and getwd how it reads the caller's directory;
+// tests replace them.
+var (
+	now   = time.Now
+	getwd = os.Getwd
+)
+
+// run is Run without the audit; ran says whether the command started.
+func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 	cmd, err := c.cmd()
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -78,12 +125,12 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	}
 	in, err := newInput(cmd, c.Stdin)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	defer in.close()
 	out, err := newOutputs(cmd, c.Stdout, c.Stderr, c.OutputCap)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	start := time.Now()
 	t, err := tree.Start(cmd)
@@ -91,13 +138,13 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	out.started()
 	if err != nil {
 		out.abandon()
-		return Result{}, err
+		return Result{}, false, err
 	}
 	defer t.Close()
+	ran = true
 
 	exited := make(chan error, 1)
 	go func() { exited <- t.WaitExit() }()
-	var res Result
 	var errs []error
 	var waitErr error
 	select {
@@ -144,7 +191,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	if res.TimedOut || res.Canceled {
 		res.ExitCode, res.Signal = -1, ""
 	}
-	return res, errors.Join(errs...)
+	return res, true, errors.Join(errs...)
 }
 
 // input feeds a reader that is not a file to the command through a pipe Run owns, so Run never
