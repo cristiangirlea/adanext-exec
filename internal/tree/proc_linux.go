@@ -86,10 +86,13 @@ func readEnv(pid int) ([]byte, error) {
 	return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
 }
 
+// statOf reads a process's stat for the check before a signal; tests replace it.
+var statOf = readStat
+
 // sameStart reports whether the pid still names the process scanned. A process that is gone
 // is not an error; a stat that cannot be read for another reason is.
 func sameStart(p proc) (bool, error) {
-	q, err := readStat(p.pid)
+	q, err := statOf(p.pid)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return false, nil
 	}

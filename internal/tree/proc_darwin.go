@@ -78,11 +78,14 @@ func readEnv(pid int) ([]byte, error) {
 	return envFromProcArgs(buf[:n])
 }
 
+// lookUp reads one process for the check before a signal; tests replace it.
+var lookUp = findProc
+
 // killProc reads the table again and signals the pid only if it still names the process
 // scanned (its start time). macOS has no pidfd: the pid could still be reused between that
 // read and the signal.
 func killProc(p proc) error {
-	q, err := findProc(p.pid)
+	q, err := lookUp(p.pid)
 	if errors.Is(err, errNoProc) {
 		return nil
 	}
