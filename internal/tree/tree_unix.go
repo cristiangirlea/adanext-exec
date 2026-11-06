@@ -56,15 +56,21 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	}
 	cmd.SysProcAttr.Setpgid = true
 	cmd.SysProcAttr.Pgid = 0
+	// Taken before the start, so a leader reaped at once (by a caller that ignores SIGCHLD)
+	// still leaves the tree a bound.
+	bound, boundErr := clockBound()
 	if err := startCmd(t, cmd); err != nil {
 		return nil, err
 	}
 	t.pgid = cmd.Process.Pid
-	// The leader is not reaped before WaitExit, so it is in the table even if it has exited.
-	if p, err := findProc(cmd.Process.Pid); err != nil {
-		t.unknown = err
-	} else {
+	// The leader's own start time is the tighter bound; it is in the table until reaped.
+	switch p, err := findProc(cmd.Process.Pid); {
+	case err == nil:
 		t.start = p.start
+	case boundErr == nil:
+		t.start = bound
+	default:
+		t.unknown = errors.Join(err, boundErr)
 	}
 	return t, nil
 }
@@ -80,7 +86,7 @@ var errNoProc = errors.New("not in the process table")
 
 // findProc reads one process from the table.
 func findProc(pid int) (proc, error) {
-	procs, err := listProcs()
+	procs, err := scanProcs()
 	if err != nil {
 		return proc{}, fmt.Errorf("read the process table: %w", err)
 	}

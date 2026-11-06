@@ -48,6 +48,13 @@ Newest first.
 - 2026-11-06: #33 (PR #34), a fix to M1a's macOS group check. A kill that came while signalled
   members were still exiting was reported as refused, since `kinfo_proc` shows an exiting
   process as running; its `P_WEXIT` flag now counts it as gone. CI caught it as a flaky test.
+- 2026-11-06: #31 (PR #32), a fix to M1b. A leader reaped before its start time was read
+  (its caller ignoring SIGCHLD) left the tree with no bound, so Kill refused to kill anything
+  and a marked descendant survived; CI caught it as a flaky test. The bound now comes from the
+  clock before the start, narrowed to the leader's own start time when it can be read.
+  On macOS both bounds follow the wall clock (no monotonic start time is readable there), so a
+  backward step of more than a second can hide escaped processes from the sweep; accepted and
+  written in the design, as the leader's own start time already had that limit.
 - 2026-11-06: M1c (PR #30, #29). The cap is per stream and optional (zero is none; the binary
   can set a default in M3). Its head passes through live, so a caller still sees a command's
   output as it runs; the tail is held and written at the end, which delays output past the
