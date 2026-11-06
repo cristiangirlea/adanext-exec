@@ -441,3 +441,18 @@ func TestNamesListsTheRulesInOrder(t *testing.T) {
 		t.Errorf("Names() = %s, want %s", got, want)
 	}
 }
+
+// A separator inside quotes can cut a rule short in the line as written; only the copy that
+// reads it as text meets the rule.
+func TestMatchesAsWrittenLeavesOutTheQuotedCopy(t *testing.T) {
+	command := `gh api -f body='a|b' -X DELETE repos/o/r`
+	if got := MatchesAsWritten(command); len(got) != 0 {
+		t.Errorf("MatchesAsWritten(%q) = %q, want none", command, got)
+	}
+	if got := Matches(command); strings.Join(got, ",") != "gh-publish" {
+		t.Errorf("Matches(%q) = %q, want gh-publish", command, got)
+	}
+	if got := MatchesAsWritten("git push"); strings.Join(got, ",") != "git-push" {
+		t.Errorf("MatchesAsWritten(git push) = %q, want git-push", got)
+	}
+}

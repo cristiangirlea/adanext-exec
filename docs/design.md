@@ -41,7 +41,7 @@ and required for limits shared across agents (the heavy-command queue).
 
 ## What it decides: policy
 
-A policy is a JSON file of rules, each matching a command and naming an outcome:
+A policy is a JSON file of rules, each matching a command and naming a decision:
 
 - **allow**: run it.
 - **ask**: a person must approve. Where the caller can ask (a Claude Code hook returning "ask"),
@@ -77,6 +77,53 @@ sees.
 
 Matching is textual and says so: it stops the plausible accident, not a determined adversary.
 Real isolation (a VM, a container, a sandbox profile) is outside this project's first scope.
+
+M2b delivers the policy as `broker.Policy`, read by `ParsePolicy` or `LoadPolicy`:
+
+```json
+{
+  "version": 1,
+  "default": "allow",
+  "rules": [
+    {"name": "git-push", "decision": "ask"},
+    {"name": "no-force", "match": "--force\\b", "decision": "refuse"}
+  ]
+}
+```
+
+- Every built-in rule (the guard's) refuses unless the policy names it with another decision. A
+  rule with `match` is the policy's own: a regular expression in Go's syntax, tested like the
+  built-in ones against every reading of the command below.
+- A command meeting several rules gets the strictest of their decisions (refuse, then ask, then
+  allow), and the verdict names the first rule with that decision: the built-in ones in the
+  table's order, then the policy's own in its order. So a rule can lift only the built-in it
+  names: an `allow` of the policy's own never overrides a built-in refusal.
+- `default` decides a command no rule meets; it is `allow` when left out, and `refuse` turns
+  the policy into a list of what may run.
+- A command is read several ways. The faithful reading is the command as given: shell text as
+  written, or an argv as shell text with each argument holding anything but letters, digits and
+  `-_./:=@%+,~\` single-quoted, so an argument with a separator in it stays one word.
+  `["git", "push"]` reads `git push`, so splitting a line into arguments cannot dodge a rule
+  written for shell text. The other readings look for what the faithful one could miss: an argv
+  joined plainly with spaces, so a quoted program path (`'/opt/node tools/npm' publish`) is not
+  cut off from its arguments, and each reading with separators inside quotes read as text. A
+  rule met in any reading counts for refuse and ask; an allow counts only when the faithful
+  reading meets it, so `["./tools/check --safe"]`, a program of that name, does not earn an
+  allow written for `./tools/check --safe`.
+- A built-in rule given allow under a refusing default allows whatever its pattern meets, as the
+  patterns were written to refuse broadly; to allow precisely, write a rule of the policy's own.
+- A policy that is not valid is an error, never a partial policy: an unknown field or rule name,
+  a name used twice, a decision (or a `default`, also `""` or `null`) other than allow, ask or
+  refuse, a match that does not compile, or a version other than 1. With the error comes a zero
+  `Policy`, which refuses everything, so a caller that misses the error runs nothing.
+  `LoadPolicy` reads a regular file of at most 1 MiB, following a link; it opens without
+  waiting, so a pipe at the name is refused rather than hanging. On Linux and macOS the file
+  must be the user's own and writable by no one else.
+- `Command.Policy` makes `Run` judge the command before it starts. A refusal, and an ask (`Run`
+  has no person to ask until M2c), returns a `*RefusedError` (`ErrRefused`) naming the rule,
+  and the command does not run. A zero `Policy` judges nothing and runs nothing (`ErrPolicy`).
+  Leaving the policy out of the SDK judges nothing, as leaving out the audit writes nothing;
+  the binary always sets one (M3).
 
 ## The command
 
@@ -204,9 +251,10 @@ whether output was cut. Secrets are redacted with the same rules as the policy's
 before anything is written. Nothing leaves the machine.
 
 M1d delivers the line through `broker.Command.Audit`, with the fields there are so far (the
-decision, the queue wait and peak memory arrive with M2, M4 and M5): `time` (the start, UTC),
-`caller`, `dir`, `args` or `shell` and `script`, `outcome` (exited, signalled, timed out,
-cancelled, not run), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+queue wait and peak memory arrive with M4 and M5): `time` (the start, UTC), `caller`, `dir`,
+`args` or `shell` and `script`, `outcome` (exited, signalled, timed out, cancelled, refused,
+not run), `decision` and `rule` (M2b: the policy's verdict, when there is a policy, and the rule
+that gave it), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
 Run did not run gets its line too, with the reason; a command whose line cannot be opened is
 not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
 (`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,
@@ -224,8 +272,9 @@ given.
 
 The audit file must be a regular file: a link or a special file (a device, a pipe) at its name
 is refused, and so is the command. On Linux and macOS the directory and the file must be the
-user's own, and any access for the group or others is taken away before the command runs. Until M2's policy brings its secret list, these are the audit's own
-rules; then the two share them.
+user's own, and any access for the group or others is taken away before the command runs. The
+redaction rules are the audit's own: the policy's secret list names files, not the shapes of
+secret values.
 
 What the audit cannot promise (#13, #14):
 
@@ -243,6 +292,14 @@ What the audit cannot promise (#13, #14):
   later): `<state dir>/adanext-exec.sock`, created owner-only. No TCP listener, no network.
 - It runs as the user, never elevated, and refuses to start elevated.
 - A client is whoever can open the socket, i.e. the same user. The protocol carries no secrets.
+
+The policy file, the socket and the audit all belong to the user the agents run as, so an
+agent that means to can change the policy, talk to the daemon, or edit the audit (#21). On
+Linux and macOS the broker refuses a policy others can write and keeps its files owner-only; on
+Windows it relies on the access lists of the user's own directories. Either way that stops
+another user, not the same one. The gate as a whole stops accidents and keeps an honest agent within
+bounds; it does not contain a hostile one running as the same user. That needs a separate user
+or a sandbox, outside this project's first scope.
 
 ## Integrations, in order
 

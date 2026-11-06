@@ -28,8 +28,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   tests. Done when M2a to M2c are.
   - [x] **M2a: the guard** (#36). harness's command guard in `internal/guard`, with its tests.
     Done: PR #39, 2026-11-06.
-  - [ ] **M2b: the policy** (#37). The JSON rules, the decisions, `Run` keeping to them, the
-    audit outcome, and the trust statement (#21).
+  - [x] **M2b: the policy** (#37). The JSON rules, the decisions, `Run` keeping to them, the
+    audit outcome, and the trust statement (#21). Done: PR #40, 2026-11-06.
   - [ ] **M2c: ask** (#20). A callback in the SDK for callers that can ask a person.
 - [ ] **M3: the binary.** `adanext-exec run` and `check`, and the JSON protocol v1
   (`docs/protocol.md`).
@@ -51,6 +51,13 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M2b (PR #40, #21). A command meeting several rules gets the strictest decision,
+  and a built-in rule is lifted only by naming it, so a policy's own `allow` cannot undo a
+  refusal it did not mean to; `default: refuse` makes a list of what may run. An argv is matched
+  as the line a POSIX shell would read back. The policy is opt-in in the SDK, as the audit is,
+  and the binary always sets one (M3); a zero `Policy` refuses everything. `LoadPolicy` refuses
+  a file others can write. The trust statement for the whole (policy, socket, audit) is in the
+  design: the gate does not contain a hostile agent running as the same user.
 - 2026-11-06: M2a (PR #39). The guard is harness's at its commit `014b929`, with its tables:
   nine rules, without `guard-env`, whose 41 rows were left out (40 match nothing here; one names
   `.npmrc` and meets `secret-file`). It reports every rule a line meets, not the first, so a

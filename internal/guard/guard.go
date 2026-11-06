@@ -67,7 +67,7 @@ func Names() []string {
 
 // Matches returns every rule the command line meets, in rule order, accepting false positives.
 func Matches(command string) []string {
-	quoted := quotedSeparators(command)
+	quoted := QuotedSeparators(command)
 	var hit []string
 	// Both forms prevent quotes hiding real pipes.
 	for _, r := range rules {
@@ -78,7 +78,20 @@ func Matches(command string) []string {
 	return hit
 }
 
-func quotedSeparators(command string) string {
+// MatchesAsWritten is Matches on the line as written only, without the quoted-separators copy.
+func MatchesAsWritten(command string) []string {
+	var hit []string
+	for _, r := range rules {
+		if r.match(command) {
+			hit = append(hit, r.name)
+		}
+	}
+	return hit
+}
+
+// QuotedSeparators is the line with |, & and ; inside quotes read as text; rules are checked
+// against both, so a misread quote can only add matches.
+func QuotedSeparators(command string) string {
 	line := []byte(command)
 	var quote byte
 	escaped := false
