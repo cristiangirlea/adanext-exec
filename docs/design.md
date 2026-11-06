@@ -105,7 +105,7 @@ Across commands (daemon):
 
 | Concern | Windows | Linux | macOS |
 |---|---|---|---|
-| Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`), the command started suspended and assigned before it runs; never breakaway | New process group (`Setpgid`); kill the group; cgroup v2 when delegated | New process group; kill the group |
+| Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`), the command started suspended and assigned before it runs; never breakaway | New process group (`Setpgid`) and a marker in the environment; kill the group, every process carrying the marker, and their descendants; the leader dies with its caller (`Pdeathsig`); cgroup v2 when delegated | The same, without a parent-death signal |
 | Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`, with its completion-port notice so the command is stopped, not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
 | Memory ceiling (portable, best effort: a short spike between polls can pass) | A watchdog polls the tree's resident memory and kills the tree over the ceiling | the same watchdog | the same watchdog; where it cannot read the tree, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
@@ -121,7 +121,36 @@ reads the process table and counts such a group as gone. It reads the table twic
 only if neither read shows a live member. macOS has no atomic listing, so this narrows but does
 not close one race: a member the user cannot signal (another user's, as under `sudo`) that forks
 and exits during both reads could hide a live child, and the refusal would go unreported. Such
-a process could not have been killed either way. A descendant that calls `setsid` or `setpgid` leaves the group (M1b).
+a process could not have been killed either way.
+
+A descendant that calls `setsid` or `setpgid` leaves the group (M1b). Each tree therefore also
+carries a marker, an environment variable whose name holds the tree's random id
+(`ADANEXT_EXEC_TREE_<id>=1`), which every descendant inherits; nested brokers add their own
+beside it. To kill the tree, the broker reads the process table (`/proc` on Linux,
+`kern.proc.all` and `KERN_PROCARGS2` on macOS, which reads each candidate's arguments and
+environment into a buffer of `kern.argmax` bytes, about 1 MiB; only processes that started after
+the command are read) and kills the group, every process of the user's
+that carries the marker, and every descendant of either by its parent link, scanning again until
+a scan finds none. Nothing that started before the command's own process is taken, and a
+parent link is followed only to a child no older than its parent. On Linux a process is pinned
+with a pidfd and its start time checked before the signal (before Linux 5.3, without pidfds,
+the check comes just before the signal); on macOS the table is read again and the start time
+checked just before the signal, which leaves a short window for a reused pid. If the command's
+start time cannot be read, only the group is killed and the error says so. The marker shows
+which tree a process came from; it is not proof: a process the user starts after the command
+and gives the marker on purpose is killed with the tree. What still escapes: a
+process that both clears its environment and is orphaned before the kill (a double-forking
+daemon started with `env -i`), one the user cannot read (setuid, or made undumpable), and work
+handed to another service (docker, `systemd-run`, launchd), which was never the command's child.
+Output such a process holds open is reported, not waited for. A per-user subreaper
+(`PR_SET_CHILD_SUBREAPER`) was weighed and left out: it changes the whole caller (hrn, `adad`),
+whose other children's orphans would then become zombies the broker could not tell apart.
+
+When the caller itself is killed before it can kill the tree (#11): on Windows the job closes
+with the caller and Windows kills the whole tree. On Linux the command's own process gets SIGKILL
+as its parent-death signal (set from a thread kept alive until the tree is closed, since Linux
+sends it when the starting thread ends); its descendants stay. macOS has no parent-death signal,
+so the whole tree stays.
 
 The console's Ctrl+C reaches the command and its caller alike. The SDK does not change console
 groups: a caller that must report after Ctrl+C handles the interrupt and cancels the context,
