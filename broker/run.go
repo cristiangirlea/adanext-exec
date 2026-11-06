@@ -27,6 +27,9 @@ type Result struct {
 	Canceled bool
 	// Duration is how long the command ran, from its start to its end.
 	Duration time.Duration
+	// OutputCut counts the bytes of output left out under the Command's OutputCap, over both
+	// streams; zero means all of it was passed on.
+	OutputCut int64
 }
 
 // outputGrace is how long Run waits, once the tree is dead, for an output pipe that stays
@@ -78,7 +81,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		return Result{}, err
 	}
 	defer in.close()
-	out, err := newOutputs(cmd, c.Stdout, c.Stderr)
+	out, err := newOutputs(cmd, c.Stdout, c.Stderr, c.OutputCap)
 	if err != nil {
 		return Result{}, err
 	}
@@ -133,6 +136,7 @@ func Run(ctx context.Context, c Command) (Result, error) {
 	if err := out.finish(); err != nil {
 		errs = append(errs, err)
 	}
+	res.OutputCut = out.cut()
 	res.ExitCode = -1
 	if cmd.ProcessState != nil {
 		res.ExitCode, res.Signal = cmd.ProcessState.ExitCode(), signalOf(cmd.ProcessState)
@@ -235,13 +239,31 @@ type outputs struct {
 
 	// mu guards the fields below and every Write to the caller's writers.
 	mu        sync.Mutex
+	streams   []*stream
 	readSince []time.Time // per copy, when its pending Read began; zero while not reading
 	finished  []bool
 	abandoned bool
+	flushed   bool
 	err       error
 }
 
-func newOutputs(cmd *exec.Cmd, stdout, stderr io.Writer) (*outputs, error) {
+// stream is one output's way to its writer under the cap: a head passed through, a tail held.
+type stream struct {
+	w        io.Writer // nil discards
+	limit    int       // 0: no cap
+	headLeft int       // bytes the head may still pass through
+	keepTail int
+	tail     []byte // at most 2*keepTail; its last keepTail bytes are written at the end
+	total    int64  // bytes the command wrote
+	passed   int64  // bytes written, or to be written, to w
+}
+
+func newStream(w io.Writer, limit int) *stream {
+	head := limit/3*2 + limit%3*2/3 // two thirds, rounded down, without overflow
+	return &stream{w: w, limit: limit, headLeft: head, keepTail: limit - head}
+}
+
+func newOutputs(cmd *exec.Cmd, stdout, stderr io.Writer, limit int) (*outputs, error) {
 	o := &outputs{}
 	var dests []io.Writer
 	pipe := func(w io.Writer) (*os.File, error) {
@@ -265,9 +287,12 @@ func newOutputs(cmd *exec.Cmd, stdout, stderr io.Writer) (*outputs, error) {
 	}
 	// The copies start once the slices they share are complete.
 	o.readSince, o.finished = make([]time.Time, len(o.readers)), make([]bool, len(o.readers))
+	for _, w := range dests {
+		o.streams = append(o.streams, newStream(w, limit))
+	}
 	for i, r := range o.readers {
 		o.wg.Add(1)
-		go o.copy(i, dests[i], r)
+		go o.copy(i, r)
 	}
 	return o, nil
 }
@@ -284,9 +309,10 @@ func sameWriter(a, b io.Writer) (same bool) {
 
 // copy keeps reading after a failed write, so the command never blocks on a full pipe, and
 // writes nothing once the output is abandoned.
-func (o *outputs) copy(i int, w io.Writer, r *os.File) {
+func (o *outputs) copy(i int, r *os.File) {
 	defer o.wg.Done()
 	buf := make([]byte, 32<<10)
+	s := o.streams[i]
 	for {
 		o.mu.Lock()
 		o.readSince[i] = time.Now()
@@ -294,13 +320,8 @@ func (o *outputs) copy(i int, w io.Writer, r *os.File) {
 		n, err := r.Read(buf)
 		o.mu.Lock()
 		o.readSince[i] = time.Time{}
-		if n > 0 && w != nil && !o.abandoned {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				if o.err == nil {
-					o.err = fmt.Errorf("write the command's output: %w", werr)
-				}
-				w = nil
-			}
+		if n > 0 && !o.abandoned {
+			o.take(s, buf[:n])
 		}
 		if err != nil {
 			o.finished[i] = true
@@ -310,6 +331,78 @@ func (o *outputs) copy(i int, w io.Writer, r *os.File) {
 			return
 		}
 	}
+}
+
+// take passes p on under the stream's cap. Called with mu held.
+func (o *outputs) take(s *stream, p []byte) {
+	s.total += int64(len(p))
+	if s.limit == 0 {
+		o.write(s, p)
+		return
+	}
+	head := min(s.headLeft, len(p))
+	o.write(s, p[:head])
+	s.headLeft -= head
+	if rest := p[head:]; len(rest) > 0 {
+		s.tail = append(s.tail, rest...)
+		if len(s.tail) > 2*s.keepTail {
+			s.tail = append(s.tail[:0:0], s.tail[len(s.tail)-s.keepTail:]...)
+		}
+	}
+}
+
+// write sends p to the stream's writer; after a failed write the rest is dropped and the first
+// error kept. Called with mu held.
+func (o *outputs) write(s *stream, p []byte) {
+	s.passed += int64(len(p))
+	if len(p) == 0 || s.w == nil {
+		return
+	}
+	if _, err := s.w.Write(p); err != nil {
+		if o.err == nil {
+			o.err = fmt.Errorf("write the command's output: %w", err)
+		}
+		s.w = nil
+	}
+}
+
+// flush writes each stream's held tail, after a line counting what was left out. Called with
+// mu held, once.
+func (o *outputs) flush() {
+	if o.flushed {
+		return
+	}
+	o.flushed = true
+	for _, s := range o.streams {
+		tail := s.tail
+		if len(tail) > s.keepTail {
+			tail = tail[len(tail)-s.keepTail:]
+		}
+		if cut := s.total - s.passed - int64(len(tail)); cut > 0 {
+			line := fmt.Sprintf("\n[... %d bytes cut ...]\n", cut)
+			if s.w != nil {
+				if _, err := io.WriteString(s.w, line); err != nil {
+					if o.err == nil {
+						o.err = fmt.Errorf("write the command's output: %w", err)
+					}
+					s.w = nil
+				}
+			}
+		}
+		o.write(s, tail)
+		s.tail = nil
+	}
+}
+
+// cut counts the bytes left out over all streams.
+func (o *outputs) cut() int64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var n int64
+	for _, s := range o.streams {
+		n += s.total - s.passed
+	}
+	return n
 }
 
 // started closes the child's ends of the pipes, so a read ends once the tree has gone.
@@ -347,6 +440,7 @@ func (o *outputs) finish() error {
 			}
 			o.mu.Lock()
 			defer o.mu.Unlock()
+			o.flush()
 			return o.err
 		case <-tick.C:
 		}
@@ -363,6 +457,7 @@ func (o *outputs) finish() error {
 		}
 		held = held && open > 0
 		if held {
+			o.flush()
 			o.abandoned = true
 		}
 		err := o.err

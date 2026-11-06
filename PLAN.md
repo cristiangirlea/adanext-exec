@@ -18,8 +18,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     nests (#19). Done: PR #27, 2026-11-06.
   - [x] **M1b: what leaves the group on Unix.** Kill descendants that called `setsid` (#10) and
     the group when the caller dies (#11), or say where it cannot. Done: PR #28, 2026-11-06.
-  - [ ] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
-    buffer does.
+  - [x] **M1c: the output cap.** Head and tail kept, the middle counted, as harness's bounded
+    buffer does. Done: PR #30, 2026-11-06.
   - [ ] **M1d: the audit line.** One JSON line per command, secrets redacted by pattern (#14),
     and what the audit and the broker do not cover said in the design (#13). The patterns are
     the audit's own until M2's policy brings its secret list, which then shares them.
@@ -52,6 +52,11 @@ Newest first.
   On macOS both bounds follow the wall clock (no monotonic start time is readable there), so a
   backward step of more than a second can hide escaped processes from the sweep; accepted and
   written in the design, as the leader's own start time already had that limit.
+- 2026-11-06: M1c (PR #30, #29). The cap is per stream and optional (zero is none; the binary
+  can set a default in M3). Its head passes through live, so a caller still sees a command's
+  output as it runs; the tail is held and written at the end, which delays output past the
+  head until the command ends. Cutting may split a multi-byte character, as harness's buffer
+  does.
 - 2026-11-06: M1b (PR #28). A process that leaves the group is found by a marker in the
   environment, the technique of build servers' process-tree killers, and by parent links at
   kill time, instead of `PR_SET_CHILD_SUBREAPER` (#10): a subreaper changes the whole caller,
