@@ -99,9 +99,44 @@ outcome but `-h` has its one answer line, a usage error included:
 | 125 | The policy cannot be used. A hook treats this as a refusal. |
 | 126 | No decision: the binary runs elevated (the answer says so), or the answer could not be written. |
 
+## The daemon (M4)
+
+`adanext-exec serve` shares heavy-command slots among every client on the machine. A client
+opens one connection to the daemon's local socket per command, and both sides write one JSON
+object per line (at most 1 MiB, ending in a newline). Every message carries `version` and
+`type`, and only the fields of its type. A `null` anywhere, a key given twice, nesting deeper
+than 8, an unknown field or type, a field of another type, or another version is refused with
+an `error` message, after which the daemon closes the connection.
+
+The client asks once:
+
+```json
+{"version": "adanext-exec/1", "type": "acquire", "args": ["go", "test", "./..."],
+ "caller": {"agent": "claude", "session": "s1", "run_id": "r1"}, "max_wait_ms": 60000}
+```
+
+`args`, or `shell` and `script`, is the command as `check` reads it: one form only, judged by
+the fields given, `args` not empty, and a shell the broker runs. `caller` is optional and
+self-reported. `max_wait_ms` is how long the client will wait for a slot (left out or 0: as
+long as it takes).
+
+The daemon answers with one of:
+
+| `type` | Fields | Meaning |
+|---|---|---|
+| `light` | none | The command needs no slot; the client runs it and closes the connection. |
+| `queued` | `position` (1 is next) | The command waits; a new `queued` comes whenever the position changes. |
+| `granted` | `slot`, `waited_ms`, `env` | The slot is the client's. `env` holds `KEY=VALUE` hints that bound the command's own parallelism, for the client to set on the command. |
+| `error` | `error` | The request is refused, or the wait passed `max_wait_ms`; the connection closes. |
+
+**A granted slot is a lease on the connection.** It is held for as long as the connection stays
+open, and released when it closes, whichever side closes it and however the client ended (#9):
+a client that crashes or is killed gives its slot back, and nothing needs to tell processes
+apart. A client keeps the connection open until its command has ended, then closes it.
+
 ## Versions
 
 Every message carries `version`, `adanext-exec/<major>`. A change that an existing client
 could misread (a field removed or given another meaning) is a new major version; a reader
 refuses a version it does not speak, and refuses fields it does not know, so neither side
-guesses. The daemon's messages (M4) join this document under the same version rule.
+guesses. The daemon's messages follow the same rule.

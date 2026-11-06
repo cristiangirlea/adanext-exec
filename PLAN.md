@@ -40,8 +40,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     Done: PR #46, 2026-11-06.
 - [ ] **M4: shared limits.** `adanext-exec serve` and the heavy-command slots. Done when M4a to
   M4c are.
-  - [ ] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
-    in `docs/protocol.md`.
+  - [x] **M4a: the daemon's messages** (acquire, queue, release a slot) added to M3's protocol
+    in `docs/protocol.md` (#47). Done: PR #48, 2026-11-06.
   - [ ] **M4b: the daemon and leases.** `serve`, its lifecycle, slots held as leases on the client
     connection (#9, #16), and what the Windows socket does not protect (#17).
   - [ ] **M4c: classification.** Which commands are heavy, configurable, and their fair share
@@ -56,6 +56,13 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-06: M4a (PR #48, #9). A slot is a lease on the client's connection: released when the
+  connection closes, however the client ends, so the design's process-identity row goes. The
+  messages are newline-delimited JSON, one connection per command. A reader refuses a null
+  anywhere and a key given twice before Go's decoding could hide either, nesting past eight
+  levels, and any field outside the message's type; a writer reads its own bytes back the same
+  way before sending. `daemon.Version` repeats `broker.ProtocolVersion` so the SDK can import
+  the daemon package, and a test keeps them equal.
 - 2026-11-06: M3b (PR #46), which completes M3. `check --json` judges without running or
   auditing anything. Every outcome has one versioned JSON answer, and an answer that cannot
   be written exits 126, so a hook reading only the code fails closed. A request is strict:
