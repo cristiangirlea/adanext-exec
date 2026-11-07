@@ -410,7 +410,11 @@ or a sandbox, outside this project's first scope.
    shell unchanged. When the policy answers ask, the hook answers ask too, shows the person the
    command, and writes the rewrite with `--approved=RULE`; Claude Code runs it only once the
    person approves. A command that passes `--approved` or `--script-b64` itself is denied, so an
-   agent cannot approve its own ask or hide a script from the hook by going through it. `run` judges the command again; an ask under RULE then runs instead of being
+   agent cannot approve its own ask or hide a script from the hook by going through it. The
+   user's own Claude Code deny and ask rules count on the original text, read from the settings
+   files Claude Code reads (M6b), since the rewrite hides that text from Claude Code's matching.
+   The rewrite names its build, and `run` refuses another build's. [claude-code.md](claude-code.md)
+   is the install guide. `run` judges the command again; an ask under RULE then runs instead of being
    refused (where no person can be asked, ask means refuse). This rests on the same-user trust
    below: `run` cannot tell who wrote `--approved`, and does not need to, since the flag only
    confirms an ask the policy itself gives.

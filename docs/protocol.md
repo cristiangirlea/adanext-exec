@@ -19,6 +19,7 @@ exits.
 | Flag | Meaning |
 |---|---|
 | `--shell NAME` | The one argument after `--` is shell text for `sh`, `bash`, `powershell`, `pwsh` or `cmd`. |
+| `--hook-version V` | The build of the hook that wrote this command line. `run` refuses (126) when it is another build than its own. |
 | `--script-b64 B` | With `--shell`, and nothing after it: the shell text as URL-safe base64 without padding (RFC 4648, section 5), in place of the argument after `--`. What the hook's rewrite writes, so no shell between the hook and `run` reads the text. |
 | `--policy FILE` | The policy file. |
 | `--profile NAME` | The policy in `<config dir>/adanext-exec/profiles/NAME.json`; NAME is lower-case letters, digits and dashes. |
@@ -59,7 +60,7 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
-| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, or the binary runs elevated. |
+| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, or `--hook-version` names another build. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
 | 128+n | The command was ended by signal n (Linux and macOS), as shells report it. |
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
@@ -111,11 +112,12 @@ outcome but `-h` has its one answer line, a usage error included:
 adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
 ```
 
-Claude Code's PreToolUse hook, the same on Windows, Linux and macOS. In Claude Code's settings:
+Claude Code's PreToolUse hook, the same on Windows, Linux and macOS. [claude-code.md](claude-code.md)
+says how to install it, and why the `|| exit 2`. In Claude Code's settings:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell",
-  "hooks": [{"type": "command", "command": "adanext-exec hook claude-code"}]}]}}
+  "hooks": [{"type": "command", "command": "adanext-exec hook claude-code || exit 2"}]}]}}
 ```
 
 It reads Claude Code's input, one JSON object of at most 1 MiB with `hook_event_name`
@@ -132,7 +134,9 @@ The answer is one JSON line on standard output, exit 0:
 
 | Policy | `permissionDecision` | The command |
 |---|---|---|
+| allow, with your Claude Code ask rule | `ask` | Rewritten. The reason names your rule and shows the original command. |
 | allow | `allow` | Rewritten. |
+| your Claude Code deny rule | `deny` | Not run. The reason names your rule. |
 | ask | `ask` | Rewritten with `--approved=RULE` (empty for an ask by the policy's default). The reason names the rule and shows the original command, since the person sees the rewrite. |
 | refuse | `deny` | Not run. The reason names the rule. |
 
@@ -140,9 +144,9 @@ The rewrite keeps every other field of `tool_input` and replaces `command` with 
 itself (its own path) running the text through `run`:
 
 ```
-'<binary>' 'run' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
+'<binary>' 'run' '--hook-version' '<build>' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
   '--agent' 'claude-code' ['--session' '<session_id>'] '--script-b64' '<text>'
-& '<binary>' 'run' '--shell' 'pwsh' ...
+& '<binary>' 'run' '--hook-version' '<build>' '--shell' 'pwsh' ...
 ```
 
 Each word is single-quoted for the tool's shell (Bash, or PowerShell after its call operator),
@@ -151,11 +155,17 @@ conversion, changes it. `run` judges the command again and runs it.
 
 **It denies what it cannot judge**: input that is not valid JSON or is larger than 1 MiB,
 another event, no tool, a `tool_input` that is not an object or has no command string, a policy
-that cannot be used, unknown arguments, a binary running elevated, a `session_id` other than
+or a Claude Code settings file that cannot be used, unknown arguments, a binary running elevated, a `session_id` other than
 1 to 128 letters, digits and `. _ : -` (Windows PowerShell would let its quotes reach `run`'s
 own parser), and a command that contains `-approved` or `-script-b64` (only the rewrite
 carries those). Each deny says why. When the answer cannot be written, the reason goes to standard error and the exit code is 2, which
 blocks the command. Claude Code still applies its own deny and ask rules, to the rewrite.
+
+**Your Claude Code rules** (M6b) count on the original text before the policy. The hook reads
+the `Bash(...)` and `PowerShell(...)` deny and ask rules from the settings files Claude Code
+reads, for the project in `CLAUDE_PROJECT_DIR` (else the input's `cwd`), and matches them as
+claude-code.md describes. The strictest of those rules and the policy decides. The rewrite
+carries no approval for an ask that is only yours.
 
 ## The daemon (M4)
 

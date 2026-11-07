@@ -56,13 +56,14 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     2026-11-07.
   - [ ] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
     delegated.
-- [ ] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell. Done when M6a and M6b
+- [x] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell. Done when M6a and M6b
   are.
   - [x] **M6a: the hook** (#56, #8, #5). `adanext-exec hook claude-code` judges Bash and
     PowerShell commands and rewrites them to `run --script-b64`, so no shell reparses the text.
     Done: PR #58, 2026-11-07.
-  - [ ] **M6b: the user's rules and the binary** (#57, #6, #7). The user's permission rules
-    applied to the original text, the hook's version carried to `run`, and installing.
+  - [x] **M6b: the user's rules and the binary** (#57, #6, #7). The user's permission rules
+    applied to the original text, the hook's version carried to `run`, and installing
+    (`docs/claude-code.md`). Done: PR #59, 2026-11-07.
 - [ ] **M7: hrn.** harness's tools run shell commands through the SDK.
 - [ ] **M8: AdaNext OS.** `adad` runs task commands through the SDK.
 
@@ -70,6 +71,19 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M6b (PR #59, #57). Claude Code gives a hook no merged view of its rules, so the
+  hook reads the files Claude Code reads (managed with its drop-ins, user, project, local and
+  the repository's local file) and applies only their Bash and PowerShell deny and ask rules,
+  the strictest of those and the policy winning. Allow rules cannot lift the policy, so they
+  are not read. Managed policy from the registry, configuration profiles, MDM or the console,
+  and `--settings`, cannot be read, and the install guide says so. A file that exists but
+  cannot be read denies. Matching follows Claude Code's documentation, with the daemon's shell
+  splitter and quotes taken off, so it reads more as a match, never on purpose less. A
+  rewrite that would let Claude Code's own matcher see the original (`if false; then <text>;
+  fi; ...`) was weighed and dropped: the text could close the `if` and run outside `run`. The
+  binary is the hook itself (#7), and a rewrite names its build (`--hook-version`), which `run`
+  checks. A missing binary fails closed through the install line's `|| exit 2`, since Claude
+  Code runs a command whose hook fails with another code.
 - 2026-11-07: M6 split into the hook (M6a) and the user's rules with the binary's discovery
   (M6b), one issue and PR each. M6a (PR #58, #56): the hook is the binary's own subcommand, so
   it needs no shell of its own (#8), and the rewrite carries the text as URL-safe base64 without
