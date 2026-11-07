@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/adanext-exec/broker"
+	"github.com/cristiangirlea/adanext-exec/internal/claudecode"
 )
 
 // hookInput is the part of Claude Code's PreToolUse input the hook reads. Other fields are
@@ -23,6 +24,7 @@ import (
 type hookInput struct {
 	Event     string          `json:"hook_event_name"`
 	Session   string          `json:"session_id"`
+	Cwd       string          `json:"cwd"`
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
 }
@@ -51,6 +53,29 @@ var sessionID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // hookExecutable is the binary the rewrite runs; tests replace it.
 var hookExecutable = os.Executable
+
+// claudeSources are where Claude Code's settings files are, for a project; tests replace it.
+var claudeSources = claudecode.DefaultSources
+
+// claudeRules are the user's Claude Code rules for the session's project: the directory the
+// session started in (CLAUDE_PROJECT_DIR), else the hook's.
+func claudeRules(cwd string) (*claudecode.Rules, error) {
+	project := os.Getenv("CLAUDE_PROJECT_DIR")
+	if project == "" {
+		project = cwd
+	}
+	if project == "" {
+		var err error
+		if project, err = os.Getwd(); err != nil {
+			return nil, fmt.Errorf("find the project: %v", err)
+		}
+	}
+	s, err := claudeSources(project)
+	if err != nil {
+		return nil, err
+	}
+	return claudecode.Load(s)
+}
 
 // lookPath finds a program in PATH; tests replace it.
 var lookPath = exec.LookPath
@@ -110,6 +135,16 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Session != "" && !sessionID.MatchString(in.Session) {
 		return deny("the session id is not letters, digits and . _ : -")
 	}
+	// The rewrite hides the text from the user's own Claude Code rules, so their deny and ask
+	// count here, on the original.
+	rules, err := claudeRules(in.Cwd)
+	if err != nil {
+		return deny("the Claude Code settings: " + err.Error())
+	}
+	userDecision, userRule := rules.Check(in.ToolName, command)
+	if userDecision == claudecode.Deny {
+		return deny(fmt.Sprintf("your Claude Code rule %q denies it", userRule))
+	}
 	if *policy != "" {
 		// The command may run in another directory than the hook.
 		if *policy, err = filepath.Abs(*policy); err != nil {
@@ -125,10 +160,10 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return deny(err.Error())
 	}
 	answer := hookDecision{Input: input}
-	switch v.Decision {
-	case broker.Refuse:
+	switch {
+	case v.Decision == broker.Refuse:
 		return deny(fmt.Sprintf("refused under rule %q", v.Rule))
-	case broker.Ask:
+	case v.Decision == broker.Ask:
 		// The rewrite hides the text, so the reason shows the person what they approve.
 		answer.Decision = "ask"
 		under := fmt.Sprintf("under rule %q", v.Rule)
@@ -136,6 +171,12 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			under = "by the policy's default"
 		}
 		answer.Reason = fmt.Sprintf("adanext-exec asks %s. The command:\n%s", under, command)
+	case userDecision == claudecode.Ask:
+		answer.Decision = "ask"
+		answer.Reason = fmt.Sprintf("your Claude Code rule %q asks. The command:\n%s", userRule, command)
+		if userRule == claudecode.Unchecked {
+			answer.Reason = fmt.Sprintf("the command is too long or tangled to check against your Claude Code rules. The command:\n%s", command)
+		}
 	default:
 		answer.Decision = "allow"
 		answer.Reason = "adanext-exec allows it; it runs through adanext-exec run"
@@ -144,7 +185,11 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return deny("find the binary for the rewrite: " + err.Error())
 	}
-	argv := []string{"run", "--shell", string(shell)}
+	id, err := build()
+	if err != nil {
+		return deny("identify this build: " + err.Error())
+	}
+	argv := []string{"run", "--hook-build", id, "--shell", string(shell)}
 	if *policy != "" {
 		argv = append(argv, "--policy", *policy)
 	}

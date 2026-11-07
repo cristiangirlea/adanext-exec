@@ -4,8 +4,12 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
+	"sync"
 )
 
 // The exit codes the binary itself gives, documented in docs/protocol.md. Any other code is the
@@ -83,6 +87,30 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	fmt.Fprintf(stderr, "adanext-exec: unknown command %q\n%s", args[0], usage)
 	return ExitUsage
+}
+
+// build is this binary's identity: a hash of its own file, so no two builds share one. A
+// hook's rewrite carries it, and run refuses a rewrite written by another build.
+var build = sync.OnceValues(func() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("find this binary: %v", err)
+	}
+	return fileID(exe)
+})
+
+// fileID is the first 128 bits of a file's SHA-256, in hex.
+func fileID(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read this binary: %v", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("read this binary: %v", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16]), nil
 }
 
 // isElevated reports whether the binary runs as root or an elevated administrator; tests replace it.

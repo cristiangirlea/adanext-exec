@@ -76,6 +76,7 @@ func useTestBinaryForRewrite(t *testing.T, e env) string {
 	t.Setenv(helperEnv, "main")
 	t.Setenv("ADANEXT_CLI_CONFIG", e.config)
 	t.Setenv("ADANEXT_CLI_AUDIT", e.audit)
+	t.Setenv("ADANEXT_CLI_CLAUDE", e.claude)
 	return exe
 }
 
@@ -157,7 +158,7 @@ func TestTheHookRewriteRunsTheExactText(t *testing.T) {
 			if err := json.Unmarshal(d.Input["command"], &rewrite); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(rewrite, "'run' '--shell' '"+string(tl.shell)+"'") || tc.mark != "" && strings.Contains(rewrite, tc.mark) || strings.Contains(rewrite, "Write-Output") || strings.Contains(rewrite, "printf") {
+			if !strings.Contains(rewrite, "'--shell' '"+string(tl.shell)+"'") || tc.mark != "" && strings.Contains(rewrite, tc.mark) || strings.Contains(rewrite, "Write-Output") || strings.Contains(rewrite, "printf") {
 				t.Errorf("%s: the rewrite %q runs another shell, or carries the text where a shell reads it", tl.name, rewrite)
 			}
 			// Claude Code's tool runs the rewrite through its shell; here, run does.
@@ -187,7 +188,7 @@ func TestTheRewriteCarriesThePolicyAndTheCaller(t *testing.T) {
 	if d == nil || json.Unmarshal(d.Input["command"], &rewrite) != nil {
 		t.Fatalf("answer %+v", d)
 	}
-	want := `'/bin/adanext-exec' 'run' '--shell' 'bash' '--profile' 'ci' '--approved=say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
+	want := `'/bin/adanext-exec' 'run' '--hook-build' '` + mustBuild(t) + `' '--shell' 'bash' '--profile' 'ci' '--approved=say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
 	if rewrite != want {
 		t.Errorf("rewrite %s\nwant    %s", rewrite, want)
 	}
