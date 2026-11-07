@@ -214,42 +214,50 @@ const maxCommand = 10000
 const Unchecked = "a command too long or tangled to check"
 
 // Check is the strictest of the user's rules for a tool's command: Deny, else Ask, else "", with
-// the rule that decided. The command is read once for all the rules.
+// the rule that decided. The command is read once for all the rules. Deny rules are tried on
+// every reading there is before any ask, also when the command is too long or tangled to read
+// whole, which then asks (Unchecked) unless a deny matched.
 func (r *Rules) Check(tool, command string) (Decision, string) {
-	sets := []struct {
-		d     Decision
+	var deny, ask []rule
+	for _, set := range []struct {
 		rules []rule
-	}{{Deny, r.deny}, {Ask, r.ask}}
-	any := false
-	for _, set := range sets {
+		to    *[]rule
+	}{{r.deny, &deny}, {r.ask, &ask}} {
 		for _, ru := range set.rules {
-			if ru.tool == tool && ru.re == nil {
-				return set.d, ru.text
+			if ru.tool == tool {
+				*set.to = append(*set.to, ru)
 			}
-			any = any || ru.tool == tool
 		}
 	}
-	if !any {
+	if len(deny)+len(ask) == 0 {
 		return "", ""
 	}
-	if len(command) > maxCommand {
-		return Ask, Unchecked
+	var texts []string
+	complete := false
+	if len(command) <= maxCommand {
+		texts, complete = readings(tool == "PowerShell", command)
 	}
-	texts, complete := readings(tool == "PowerShell", command)
-	if !complete {
-		return Ask, Unchecked
-	}
-	for _, set := range sets {
-		for _, ru := range set.rules {
-			if ru.tool != tool {
-				continue
+	matching := func(rules []rule) (string, bool) {
+		for _, ru := range rules {
+			if ru.re == nil {
+				return ru.text, true
 			}
 			for _, t := range texts {
 				if ru.re.MatchString(t) {
-					return set.d, ru.text
+					return ru.text, true
 				}
 			}
 		}
+		return "", false
+	}
+	if rule, ok := matching(deny); ok {
+		return Deny, rule
+	}
+	if rule, ok := matching(ask); ok {
+		return Ask, rule
+	}
+	if !complete {
+		return Ask, Unchecked
 	}
 	return "", ""
 }

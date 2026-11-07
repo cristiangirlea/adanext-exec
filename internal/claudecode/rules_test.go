@@ -341,3 +341,26 @@ func TestLongAndTangledCommandsAreBounded(t *testing.T) {
 		t.Errorf("a quoted brace as the last word: %q, want the exact rule to match without it", d)
 	}
 }
+
+// A deny wins over a bare ask, and over a command too tangled to read whole, when it matches
+// what could be read.
+func TestDenyWinsOverABareAskAndAnUnreadTail(t *testing.T) {
+	r := rulesOf(t, `{"permissions": {"deny": ["Bash(pwd)"], "ask": ["Bash"]}}`)
+	if d, rule := r.Check("Bash", "pwd"); d != Deny || rule != "Bash(pwd)" {
+		t.Errorf("pwd: %q %q, want the deny", d, rule)
+	}
+	if d, rule := r.Check("Bash", "ls"); d != Ask || rule != "Bash" {
+		t.Errorf("ls: %q %q, want the bare ask", d, rule)
+	}
+	r = rulesOf(t, `{"permissions": {"deny": ["Bash(pwd)"], "ask": ["Bash(ls *)"]}}`)
+	tangled := "pwd; " + strings.Repeat("a= ", 3330) + "true"
+	if d, rule := r.Check("Bash", tangled); d != Deny || rule != "Bash(pwd)" {
+		t.Errorf("a deny before a tangled tail: %q %q, want the deny", d, rule)
+	}
+	if d, rule := r.Check("Bash", "ls; "+strings.Repeat("a= ", 3330)+"true"); d != Ask || rule != "Bash(ls *)" {
+		t.Errorf("an ask before a tangled tail: %q %q, want that ask", d, rule)
+	}
+	if d, rule := r.Check("Bash", "true; "+strings.Repeat("a= ", 3330)+"true"); d != Ask || rule != Unchecked {
+		t.Errorf("a tangled command with no match: %q %q, want ask as unchecked", d, rule)
+	}
+}
