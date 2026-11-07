@@ -8,6 +8,7 @@ back. The version is `adanext-exec/1` (`broker.ProtocolVersion`). [design.md](de
 ```
 adanext-exec run [flags] -- <program> [args...]
 adanext-exec run [flags] --shell <name> -- <script>
+adanext-exec run [flags] --shell <name> --script-b64 <script as base64>
 ```
 
 Runs one command through `broker.Run` and exits with its code. The command's input, output and
@@ -18,9 +19,10 @@ exits.
 | Flag | Meaning |
 |---|---|
 | `--shell NAME` | The one argument after `--` is shell text for `sh`, `bash`, `powershell`, `pwsh` or `cmd`. |
+| `--script-b64 B` | With `--shell`, and nothing after it: the shell text as URL-safe base64 without padding (RFC 4648, section 5), in place of the argument after `--`. What the hook's rewrite writes, so no shell between the hook and `run` reads the text. |
 | `--policy FILE` | The policy file. |
 | `--profile NAME` | The policy in `<config dir>/adanext-exec/profiles/NAME.json`; NAME is lower-case letters, digits and dashes. |
-| `--approved RULE` | A person approved an ask under RULE. It counts only when the policy's own answer for the command is ask under that same rule. |
+| `--approved RULE` | A person approved an ask under RULE. It counts only when the policy's own answer for the command is ask under that same rule. An empty RULE (`--approved=`) is an ask by the policy's default, which names no rule. |
 | `--audit-dir DIR` | The audit directory, instead of the user's state directory. |
 | `--timeout D` | Kill the command's tree after D (Go's duration syntax: `90s`, `5m`). |
 | `--output-cap N` | Bound each output stream to N bytes. |
@@ -102,6 +104,58 @@ outcome but `-h` has its one answer line, a usage error included:
 | 121 | The request or the flags are not valid: not one JSON object, an unknown field or a field of the wrong type (a `null` argument included), another version, both an argv and shell text or neither, an empty program name, an unknown shell, more than 1 MiB, or input that could not be read. |
 | 125 | The policy cannot be used. A hook treats this as a refusal. |
 | 126 | No decision: the binary runs elevated (the answer says so), or the answer could not be written. |
+
+## `adanext-exec hook claude-code`
+
+```
+adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
+```
+
+Claude Code's PreToolUse hook, the same on Windows, Linux and macOS. In Claude Code's settings:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell",
+  "hooks": [{"type": "command", "command": "adanext-exec hook claude-code"}]}]}}
+```
+
+It reads Claude Code's input, one JSON object of at most 1 MiB with `hook_event_name`
+`PreToolUse`, and acts on the `Bash` and `PowerShell` tools. For any other tool it writes nothing
+and exits 0, so Claude Code's own permissions decide. It judges `tool_input.command` by the
+policy, chosen as for `run` (a relative `--policy` is made absolute), as shell text for `bash`
+or, for the PowerShell tool, `pwsh` when it is in PATH and otherwise `powershell` (Windows).
+The answer is one JSON line on standard output, exit 0:
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+  "permissionDecisionReason": "...", "updatedInput": {"command": "...", "description": "..."}}}
+```
+
+| Policy | `permissionDecision` | The command |
+|---|---|---|
+| allow | `allow` | Rewritten. |
+| ask | `ask` | Rewritten with `--approved=RULE` (empty for an ask by the policy's default). The reason names the rule and shows the original command, since the person sees the rewrite. |
+| refuse | `deny` | Not run. The reason names the rule. |
+
+The rewrite keeps every other field of `tool_input` and replaces `command` with the binary
+itself (its own path) running the text through `run`:
+
+```
+'<binary>' 'run' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
+  '--agent' 'claude-code' ['--session' '<session_id>'] '--script-b64' '<text>'
+& '<binary>' 'run' '--shell' 'pwsh' ...
+```
+
+Each word is single-quoted for the tool's shell (Bash, or PowerShell after its call operator),
+and the text is base64 without `+`, `/` or `=`, so neither shell, nor Git Bash's path
+conversion, changes it. `run` judges the command again and runs it.
+
+**It denies what it cannot judge**: input that is not valid JSON or is larger than 1 MiB,
+another event, no tool, a `tool_input` that is not an object or has no command string, a policy
+that cannot be used, unknown arguments, a binary running elevated, a `session_id` other than
+1 to 128 letters, digits and `. _ : -` (Windows PowerShell would let its quotes reach `run`'s
+own parser), and a command that contains `-approved` or `-script-b64` (only the rewrite
+carries those). Each deny says why. When the answer cannot be written, the reason goes to standard error and the exit code is 2, which
+blocks the command. Claude Code still applies its own deny and ask rules, to the rewrite.
 
 ## The daemon (M4)
 

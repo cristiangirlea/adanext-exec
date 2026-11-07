@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,9 +23,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	shell := flags.String("shell", "", "run the one argument after -- as shell text: sh, bash, powershell, pwsh or cmd")
+	scriptB64 := flags.String("script-b64", "", "with --shell: the script as URL-safe base64 without padding, instead of an argument after --")
 	policy := flags.String("policy", "", "the policy file (default: the user's adanext-exec/policy.json, else the built-in rules)")
 	profile := flags.String("profile", "", "the policy in the user's adanext-exec/profiles/<name>.json")
-	approved := flags.String("approved", "", "a person approved an ask under this rule; it counts only when the policy answers ask under it")
+	approved := flags.String("approved", "", "a person approved an ask under this rule (empty: the policy's default); it counts only when the policy answers ask under it")
 	audit := flags.String("audit-dir", "", "the audit directory (default: the user's state directory)")
 	timeout := flags.Duration("timeout", 0, "kill the command's tree after this long (0: none)")
 	outputCap := flags.Int("output-cap", 0, "bound each output stream to this many bytes (0: none)")
@@ -62,6 +64,18 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
 	}
 	switch {
+	case *scriptB64 != "":
+		// The script as base64: what a hook writes, so no shell between it and run reparses it.
+		script, err := base64.RawURLEncoding.Strict().DecodeString(*scriptB64)
+		switch {
+		case *shell == "":
+			return usageFail(stderr, "--script-b64 needs --shell")
+		case len(rest) != 0:
+			return usageFail(stderr, "--script-b64 takes no arguments after it")
+		case err != nil || len(script) == 0:
+			return usageFail(stderr, "--script-b64 is not URL-safe base64, without padding, of a script")
+		}
+		c.Shell, c.Script = broker.Shell(*shell), string(script)
 	case len(rest) == 0:
 		return usageFail(stderr, "no command after --")
 	case *shell != "" && len(rest) != 1:
@@ -83,7 +97,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		p = &broker.Policy{}
 	}
 	c.Policy = p
-	if *approved != "" {
+	approvedSet := false
+	flags.Visit(func(f *flag.Flag) { approvedSet = approvedSet || f.Name == "approved" })
+	if approvedSet {
+		// An empty RULE approves an ask by the policy's default, which names no rule.
 		rule := *approved
 		c.Ask = func(_ context.Context, _ broker.Command, v broker.Verdict) (bool, error) {
 			return v.Rule == rule, nil
