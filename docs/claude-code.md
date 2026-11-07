@@ -89,7 +89,10 @@ PowerShell 5.1.
   Claude Code's prompt, even when no allow rule covers it.
 - **Matching.** The hook also matches with quotes taken off, so `git 'push'` matches
   `Bash(git push *)` here, which Claude Code itself would not match, and after a wrapper it
-  tries every word, so `timeout 5 echo rm` matches `Bash(rm *)`. Claude Code's
+  tries every word, so `timeout 5 echo rm` matches `Bash(rm *)`. It reads the text several
+  ways (with quotes kept, ignoring quotes and comments, braces as blocks and as letters) and a
+  match in any counts. It is still a reading of text, not a shell: like Claude Code's own
+  rules, it is no security boundary. The policy and its guard are the gate. Claude Code's
   "known-safe" assignment list for allow rules, which its documentation does not give, plays
   no part, since only deny and ask are applied.
 - **The shell.** Under the Bash tool on Linux and macOS, the text runs under `bash`,

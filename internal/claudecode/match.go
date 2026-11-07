@@ -54,29 +54,51 @@ func parseRule(text string) (rule, bool) {
 	return r, true
 }
 
-// matches reports whether the rule matches the command or any command within it. Each command
-// of a compound one, of a substitution, a group, a loop's body or a block, is tried as written
-// and with quotes taken off, and so are the forms with what runs it taken off (leading
-// assignments, shell keywords, wrappers) and, in PowerShell, with an alias read as its cmdlet.
-// Every reading only adds a way to match: it matches more text than Claude Code does, never on
-// purpose less.
+// matches reports whether the rule matches the command or any command within it. The text is
+// read several ways, and a match in any counts: whole; cut at every separator, substitution,
+// bracket, backtick and new line regardless of quotes and comments; and each of those split
+// into commands by a reader that keeps quotes (braces read as blocks, and again as letters).
+// Each command is tried as written and with quotes taken off, and so are the forms with what
+// runs it taken off (leading assignments, shell keywords, wrappers) and, in PowerShell, with an
+// alias read as its cmdlet. Every reading only adds a way to match, so it matches more text than
+// Claude Code does, never on purpose less. Like Claude Code's own rules, it reads text: it is
+// not a parser of every form a shell has.
 func (r rule) matches(command string) bool {
-	if r.re == nil || r.re.MatchString(strings.TrimSpace(command)) {
+	if r.re == nil {
 		return true
 	}
 	ps := r.tool == "PowerShell"
-	for _, c := range split(ps, command) {
-		if r.re.MatchString(c.span) {
+	tried := map[string]bool{}
+	try := func(s string) bool {
+		if s == "" || tried[s] {
+			return false
+		}
+		tried[s] = true
+		return r.re.MatchString(s)
+	}
+	texts := append([]string{command}, cuts.Split(command, -1)...)
+	for _, text := range texts {
+		if try(strings.TrimSpace(text)) {
 			return true
 		}
-		for _, form := range forms(ps, c.tokens) {
-			if r.re.MatchString(join(form, true)) || r.re.MatchString(join(form, false)) {
-				return true
+		for _, braces := range []bool{true, false} {
+			for _, c := range split(ps, text, braces) {
+				if try(c.span) {
+					return true
+				}
+				for _, form := range forms(ps, c.tokens) {
+					if try(join(form, true)) || try(join(form, false)) {
+						return true
+					}
+				}
 			}
 		}
 	}
 	return false
 }
+
+// cuts are where the text is cut for the reading that ignores quotes and comments.
+var cuts = regexp.MustCompile("&&|\\|\\||\\$\\(|[;|&{}()`#\\r\\n]")
 
 // join is the tokens with one space between, as written or with quotes taken off.
 func join(ts []token, raw bool) string {

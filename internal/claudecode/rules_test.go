@@ -268,7 +268,7 @@ func TestRulesMatchTheTextAsWritten(t *testing.T) {
 
 // The splitter keeps each command's text as written and cuts only outside quotes.
 func TestSplitKeepsTheTextAsWritten(t *testing.T) {
-	cmds := split(false, `a 'b;c' && d "e $(f g) h" | i`)
+	cmds := split(false, `a 'b;c' && d "e $(f g) h" | i`, true)
 	var spans []string
 	for _, c := range cmds {
 		spans = append(spans, c.span)
@@ -284,4 +284,25 @@ func TestSplitKeepsTheTextAsWritten(t *testing.T) {
 func quoteJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// Text the quote-keeping reader misreads still matches through the reading that ignores quotes
+// and comments, or reads braces as letters, or keeps what comes before a substitution.
+func TestRulesMatchWhereTheReaderIsUnsure(t *testing.T) {
+	nl, bs, bt := string(rune(10)), string(rune(92)), "`"
+	for _, tc := range []struct {
+		tool, rule, command string
+	}{
+		{"Bash", "Bash(rm *)", "echo ok # '" + nl + "rm x"},
+		{"Bash", "Bash(rm *)", "echo ok # '" + nl + "timeout 5 rm x"},
+		{"PowerShell", "PowerShell(Remove-Item *)", "Get-Date # '" + nl + "ri x"},
+		{"Bash", "Bash(rm *)", "echo " + bt + "echo " + bs + bt + "rm x" + bs + bt + bt},
+		{"Bash", "Bash(echo a{b}c)", "timeout 5 echo a{b}c"},
+		{"Bash", "Bash(rm x)", "rm x$(true)y"},
+	} {
+		r := rulesOf(t, `{"permissions": {"ask": [`+quoteJSON(tc.rule)+`]}}`)
+		if d, _ := r.Check(tc.tool, tc.command); d != Ask {
+			t.Errorf("%s on %q: %q, want ask", tc.rule, tc.command, d)
+		}
+	}
 }

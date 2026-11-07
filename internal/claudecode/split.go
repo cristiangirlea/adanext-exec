@@ -18,10 +18,10 @@ type command struct {
 // split cuts shell text into its commands: at &&, ||, ;, |, &, and new lines outside quotes. A
 // command substitution, $( ) and, in Bash, a pair of backticks (also inside double quotes), and
 // a parenthesised group are commands of their own, and the command around them goes on after
-// them. Unquoted braces are tokens of their own. The escape character is a backslash in Bash
-// and a backtick in PowerShell. It reads plain command lines, not every form a shell has; where
-// it is unsure it cuts, so a rule is tried on more pieces, not fewer.
-func split(powershell bool, script string) []command {
+// them. With braces, unquoted braces are tokens of their own; without, they are letters. The
+// escape character is a backslash in Bash and a backtick in PowerShell. It reads plain command
+// lines, not every form a shell has: matches reads the text other ways as well.
+func split(powershell bool, script string, braces bool) []command {
 	escape, backticks := '\\', true
 	if powershell {
 		escape, backticks = '`', false
@@ -122,7 +122,7 @@ func split(powershell bool, script string) []command {
 			}
 		case r == '&' || r == '|' || r == ';' || r == '\n' || r == '\r':
 			flushCmd()
-		case r == '{' || r == '}':
+		case braces && (r == '{' || r == '}'):
 			span.WriteRune(r)
 			flushWord()
 			tokens = append(tokens, token{raw: string(r), text: string(r), brace: true})
