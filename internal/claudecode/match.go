@@ -86,7 +86,12 @@ func (r rule) matches(command string) bool {
 				if try(c.span) {
 					return true
 				}
-				for _, form := range forms(ps, c.tokens) {
+				fs, complete := forms(ps, c.tokens)
+				if !complete {
+					// Too many readings to try: counted as a match, so the rule applies.
+					return true
+				}
+				for _, form := range fs {
 					if try(join(form, true)) || try(join(form, false)) {
 						return true
 					}
@@ -123,16 +128,23 @@ var keywords = map[string]bool{
 	"elseif": true, "foreach": true, "for": true, "switch": true, "try": true, "catch": true, "finally": true, "trap": true,
 }
 
+// maxForms bounds the readings of one command, so a long or tangled command cannot hold the
+// hook: Claude Code runs a command whose hook times out.
+const maxForms = 4096
+
 // forms are the token lists a command is matched as: the command without its braces, each
 // piece between braces (a block's commands), and of each the forms with what runs it taken off.
-func forms(ps bool, tokens []token) [][]token {
+// It is not complete when there were more than maxForms to try.
+func forms(ps bool, tokens []token) ([][]token, bool) {
 	var out [][]token
 	seen := map[string]bool{}
+	visits := 0
 	var walk func(w []token)
 	walk = func(w []token) {
-		if len(w) == 0 {
+		if len(w) == 0 || visits > maxForms {
 			return
 		}
+		visits++
 		key := join(w, true) + string(rune(0)) + join(w, false)
 		if seen[key] {
 			return
@@ -141,8 +153,11 @@ func forms(ps bool, tokens []token) [][]token {
 		out = append(out, w)
 		// A closing brace stuck to the last word, quoted or not, also read as not there.
 		if last := w[len(w)-1]; strings.HasSuffix(last.text, "}") {
-			trimmed := token{raw: strings.TrimRight(last.raw, "}"), text: strings.TrimRight(last.text, "}")}
-			walk(append(append([]token(nil), w[:len(w)-1]...), trimmed))
+			rest := append([]token(nil), w[:len(w)-1]...)
+			if text := strings.TrimRight(last.text, "}"); text != "" {
+				rest = append(rest, token{raw: strings.TrimRight(last.raw, "}"), text: text})
+			}
+			walk(rest)
 		}
 		first := strings.ToLower(w[0].text)
 		if cmdlet, ok := aliases[first]; ok && ps {
@@ -169,7 +184,7 @@ func forms(ps bool, tokens []token) [][]token {
 	}
 	walk(piece)
 	walk(whole)
-	return out
+	return out, visits <= maxForms
 }
 
 func isAssignment(w string) bool {

@@ -65,6 +65,10 @@ PowerShell 5.1.
      every word, so their options cannot hide the command;
    - PowerShell's built-in aliases (`rm` is `Remove-Item`), with case ignored.
 
+   A command over 10,000 characters asks when you have any rule for its tool, as Claude Code
+   itself always asks about one, and so does one with more readings than the hook tries; the
+   hook must answer before Claude Code's timeout, after which it runs the command unjudged.
+
    A deny denies. An ask asks, unless the policy refuses. A settings file that exists but
    cannot be read denies every command, since its rules cannot be applied.
 2. **The policy.** refuse denies, ask asks (the rewrite then carries the approval), and allow

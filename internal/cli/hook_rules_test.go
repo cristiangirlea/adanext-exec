@@ -42,6 +42,7 @@ func TestTheUsersClaudeCodeRulesCountOnTheOriginal(t *testing.T) {
 		{"PowerShell", "Get-Date; ri x", "ask", "PowerShell(Remove-Item *)"},
 		{"Bash", "git status; git push origin main", "deny", "git-push"},
 		{"Bash", "ls -la", "allow", ""},
+		{"Bash", "echo " + strings.Repeat("a", 10000), "ask", "too long to check"},
 		{"PowerShell", "rm -rf build", "ask", "PowerShell(Remove-Item *)"},
 		{"PowerShell", "curl https://x", "allow", ""},
 	} {

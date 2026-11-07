@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // rulesOf is the rules from one settings text, as the project's settings.json.
@@ -307,5 +308,38 @@ func TestRulesMatchWhereTheReaderIsUnsure(t *testing.T) {
 		if d, _ := r.Check(tc.tool, tc.command); d != Ask {
 			t.Errorf("%s on %q: %q, want ask", tc.rule, tc.command, d)
 		}
+	}
+}
+
+// A long or tangled command is answered at once: over 10000 characters it asks when there are
+// rules for the tool, and more readings than the bound count as a match.
+func TestLongAndTangledCommandsAreBounded(t *testing.T) {
+	r := rulesOf(t, `{"permissions": {"deny": ["Bash(never-matches)"]}}`)
+	for name, cmd := range map[string]string{
+		"substitutions": "echo " + strings.Repeat("a$(true)", 100000),
+		"wrappers":      strings.Repeat("time ", 1900) + "echo ok",
+		"braces":        strings.Repeat("{ a } ", 1600),
+	} {
+		start := time.Now()
+		d, rule := r.Check("Bash", cmd)
+		if took := time.Since(start); took > 3*time.Second {
+			t.Errorf("%s: took %v", name, took)
+		}
+		if len(cmd) > maxCommand && (d != Ask || rule != LongCommand) {
+			t.Errorf("%s (%d characters): %q %q, want ask", name, len(cmd), d, rule)
+		}
+		if name == "wrappers" && d != Deny {
+			t.Errorf("wrappers: %q, want the rule applied once the readings run out", d)
+		}
+	}
+	if d, _ := r.Check("PowerShell", strings.Repeat("x", maxCommand+1)); d != "" {
+		t.Errorf("a long command with no rules for its tool: %q, want nothing", d)
+	}
+	if d, _ := r.Check("Bash", "echo foo '}'"); d != "" {
+		t.Errorf("echo foo '}': %q", d)
+	}
+	exact := rulesOf(t, `{"permissions": {"ask": ["Bash(echo foo)"]}}`)
+	if d, _ := exact.Check("Bash", "echo foo '}'"); d != Ask {
+		t.Errorf("a quoted brace as the last word: %q, want the exact rule to match without it", d)
 	}
 }
