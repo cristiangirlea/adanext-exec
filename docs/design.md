@@ -345,7 +345,7 @@ process that both clears its environment and is orphaned before the kill (a doub
 daemon started with `env -i`), one the user cannot read (setuid, or made undumpable), and work
 handed to another service (docker, `systemd-run`, launchd), which was never the command's child.
 Output such a process holds open is reported, not waited for. A per-user subreaper
-(`PR_SET_CHILD_SUBREAPER`) was weighed and left out: it changes the whole caller (`run`, or an SDK user),
+(`PR_SET_CHILD_SUBREAPER`) was weighed and left out: it changes the whole caller (an SDK user),
 whose other children's orphans would then become zombies the broker could not tell apart.
 
 When the caller itself is killed before it can kill the tree (#11): on Windows the job closes
