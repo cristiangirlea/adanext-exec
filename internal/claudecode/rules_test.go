@@ -175,6 +175,42 @@ func TestLoadFailsOnASettingsFileItCannotRead(t *testing.T) {
 	}
 }
 
+// A session started in a subdirectory of a repository also has the repository root's
+// settings.local.json, as Claude Code reads it there.
+func TestLoadReadsTheRepositorysLocalSettings(t *testing.T) {
+	repo := t.TempDir()
+	sub := filepath.Join(repo, "a", "b")
+	write(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main")
+	write(t, filepath.Join(repo, ".claude", "settings.local.json"), `{"permissions": {"deny": ["Bash(x)"]}}`)
+	write(t, filepath.Join(sub, ".claude", "settings.json"), `{"permissions": {"ask": ["Bash(y)"]}}`)
+	s, err := DefaultSources(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := filepath.EvalSymlinks(s.Repo); got != mustEval(t, repo) {
+		t.Fatalf("repo %q, want %q", s.Repo, repo)
+	}
+	r, err := Load(Sources{Project: sub, Repo: s.Repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := r.Check("Bash", "x"); d != Deny {
+		t.Errorf("x: %q, want the repository's deny", d)
+	}
+	if d, _ := r.Check("Bash", "y"); d != Ask {
+		t.Errorf("y: %q, want the project's ask", d)
+	}
+}
+
+func mustEval(t *testing.T, p string) string {
+	t.Helper()
+	got, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 // The user's directory is $CLAUDE_CONFIG_DIR when it is set, else ~/.claude; the managed one is
 // the platform's.
 func TestDefaultSources(t *testing.T) {

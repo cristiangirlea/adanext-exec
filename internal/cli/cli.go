@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime/debug"
 )
 
 // The exit codes the binary itself gives, documented in docs/protocol.md. Any other code is the
@@ -83,6 +84,29 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	fmt.Fprintf(stderr, "adanext-exec: unknown command %q\n%s", args[0], usage)
 	return ExitUsage
+}
+
+// version is this binary's build, as the Go toolchain recorded it: the module's version, and
+// the commit it was built from. A hook's rewrite carries it, so run refuses a rewrite written by
+// another build.
+func version() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	v := bi.Main.Version
+	for _, s := range bi.Settings {
+		switch {
+		case s.Key == "vcs.revision":
+			v += "+" + s.Value
+		case s.Key == "vcs.modified" && s.Value == "true":
+			v += "-modified"
+		}
+	}
+	if v == "" {
+		return "unknown"
+	}
+	return v
 }
 
 // isElevated reports whether the binary runs as root or an elevated administrator; tests replace it.

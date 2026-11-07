@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cristiangirlea/adanext-exec/internal/claudecode"
 )
 
 const helperEnv = "ADANEXT_CLI_HELPER"
@@ -71,6 +73,10 @@ func helperMain(mode string) {
 		isElevated = func() bool { return false }
 		configDir = func() (string, error) { return os.Getenv("ADANEXT_CLI_CONFIG"), nil }
 		auditDir = func() (string, error) { return os.Getenv("ADANEXT_CLI_AUDIT"), nil }
+		claude := os.Getenv("ADANEXT_CLI_CLAUDE")
+		claudeSources = func(project string) (claudecode.Sources, error) {
+			return claudecode.Sources{Managed: filepath.Join(claude, "managed"), User: filepath.Join(claude, "user"), Project: project}, nil
+		}
 		os.Exit(Main(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	case "args":
 		// Its own arguments, after the test flag, one per line, and a line on standard error.
@@ -91,11 +97,13 @@ func readAll(f *os.File) ([]byte, error) {
 // env is where a test keeps the binary's configuration and audit, away from the user's.
 type env struct {
 	config, audit, marker string
+	// claude holds Claude Code's settings: managed/, user/ and project/.
+	claude string
 }
 
 func setup(t *testing.T) env {
 	t.Helper()
-	e := env{config: t.TempDir(), audit: t.TempDir(), marker: filepath.Join(t.TempDir(), "ran")}
+	e := env{config: t.TempDir(), audit: t.TempDir(), marker: filepath.Join(t.TempDir(), "ran"), claude: t.TempDir()}
 	oldConfig, oldAudit := configDir, auditDir
 	configDir = func() (string, error) { return e.config, nil }
 	auditDir = func() (string, error) { return e.audit, nil }
@@ -103,6 +111,13 @@ func setup(t *testing.T) env {
 	defaultSocket = func() (string, error) { return filepath.Join(e.config, "none.sock"), nil }
 	t.Cleanup(func() { configDir, auditDir, defaultSocket = oldConfig, oldAudit, oldSocket })
 	t.Setenv("ADANEXT_CLI_MARKER", e.marker)
+	// The hook reads Claude Code's settings from here, never the user's.
+	oldSources := claudeSources
+	claudeSources = func(project string) (claudecode.Sources, error) {
+		return claudecode.Sources{Managed: filepath.Join(e.claude, "managed"), User: filepath.Join(e.claude, "user"), Project: project}, nil
+	}
+	t.Cleanup(func() { claudeSources = oldSources })
+	t.Setenv("CLAUDE_PROJECT_DIR", filepath.Join(e.claude, "project"))
 	return e
 }
 

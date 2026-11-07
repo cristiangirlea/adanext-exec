@@ -32,11 +32,14 @@ type Sources struct {
 	User string
 	// Project is the project's root, which holds .claude/settings.json and settings.local.json.
 	Project string
+	// Repo is the git repository's root above Project, whose .claude/settings.local.json Claude
+	// Code also reads when a session starts in a subdirectory; "" when there is none.
+	Repo string
 }
 
 // DefaultSources are the places Claude Code reads on this platform, for a project root.
 func DefaultSources(project string) (Sources, error) {
-	s := Sources{Project: project}
+	s := Sources{Project: project, Repo: repoRoot(project)}
 	switch runtime.GOOS {
 	case "windows":
 		pf := os.Getenv("ProgramFiles")
@@ -59,6 +62,27 @@ func DefaultSources(project string) (Sources, error) {
 		s.User = filepath.Join(home, ".claude")
 	}
 	return s, nil
+}
+
+// repoRoot is the nearest directory at or above dir that holds .git, or "".
+func repoRoot(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // Rules are the deny and ask rules for Bash and PowerShell from every settings file read.
@@ -120,6 +144,9 @@ func Load(s Sources) (*Rules, error) {
 	}
 	if s.Project != "" {
 		others = append(others, filepath.Join(s.Project, ".claude", "settings.json"), filepath.Join(s.Project, ".claude", "settings.local.json"))
+	}
+	if s.Repo != "" && s.Repo != s.Project {
+		others = append(others, filepath.Join(s.Repo, ".claude", "settings.local.json"))
 	}
 	for _, path := range others {
 		f, err := readSettings(path)
