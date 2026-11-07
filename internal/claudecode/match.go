@@ -70,7 +70,7 @@ func (r rule) matches(command string) bool {
 	ps := r.tool == "PowerShell"
 	tried := map[string]bool{}
 	try := func(s string) bool {
-		if s == "" || tried[s] {
+		if tried[s] {
 			return false
 		}
 		tried[s] = true
@@ -97,8 +97,9 @@ func (r rule) matches(command string) bool {
 	return false
 }
 
-// cuts are where the text is cut for the reading that ignores quotes and comments.
-var cuts = regexp.MustCompile("&&|\\|\\||\\$\\(|[;|&{}()`#\\r\\n]")
+// cuts are where the text is cut for the reading that ignores quotes and comments; a comment
+// ends at a new line, which is a cut.
+var cuts = regexp.MustCompile("&&|\\|\\||\\$\\(|[;|&{}()`\\r\\n]")
 
 // join is the tokens with one space between, as written or with quotes taken off.
 func join(ts []token, raw bool) string {
@@ -138,6 +139,11 @@ func forms(ps bool, tokens []token) [][]token {
 		}
 		seen[key] = true
 		out = append(out, w)
+		// A closing brace stuck to the last word, quoted or not, also read as not there.
+		if last := w[len(w)-1]; strings.HasSuffix(last.text, "}") {
+			trimmed := token{raw: strings.TrimRight(last.raw, "}"), text: strings.TrimRight(last.text, "}")}
+			walk(append(append([]token(nil), w[:len(w)-1]...), trimmed))
+		}
 		first := strings.ToLower(w[0].text)
 		if cmdlet, ok := aliases[first]; ok && ps {
 			walk(append([]token{{raw: cmdlet, text: cmdlet}}, w[1:]...))

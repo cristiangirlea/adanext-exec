@@ -299,6 +299,9 @@ func TestRulesMatchWhereTheReaderIsUnsure(t *testing.T) {
 		{"Bash", "Bash(rm *)", "echo " + bt + "echo " + bs + bt + "rm x" + bs + bt + bt},
 		{"Bash", "Bash(echo a{b}c)", "timeout 5 echo a{b}c"},
 		{"Bash", "Bash(rm x)", "rm x$(true)y"},
+		{"Bash", "Bash(rm a#b)", "echo ok # '" + nl + "rm a#b"},
+		{"Bash", "Bash(echo a}b)", "timeout 5 echo 'a}b}'"},
+		{"Bash", "Bash(**)", " "},
 	} {
 		r := rulesOf(t, `{"permissions": {"ask": [`+quoteJSON(tc.rule)+`]}}`)
 		if d, _ := r.Check(tc.tool, tc.command); d != Ask {
