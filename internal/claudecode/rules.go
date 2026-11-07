@@ -206,31 +206,48 @@ func readSettings(path string) (*settingsFile, error) {
 }
 
 // maxCommand is the longest command matched rule by rule. Claude Code always asks about a
-// longer one, and so does Check when there are rules for the tool, since reading it could hold
-// the hook past its timeout.
+// longer one, and so does Check when there are rules for the tool.
 const maxCommand = 10000
 
-// LongCommand is the rule Check names when it asks about a command longer than maxCommand.
-const LongCommand = "a command over 10000 characters"
+// Unchecked is the rule Check names when it asks about a command too long or too tangled to
+// read within its bounds.
+const Unchecked = "a command too long or tangled to check"
 
 // Check is the strictest of the user's rules for a tool's command: Deny, else Ask, else "", with
-// the rule that decided.
+// the rule that decided. The command is read once for all the rules.
 func (r *Rules) Check(tool, command string) (Decision, string) {
-	if len(command) > maxCommand {
-		for _, ru := range append(append([]rule(nil), r.deny...), r.ask...) {
-			if ru.tool == tool {
-				return Ask, LongCommand
-			}
-		}
-		return "", ""
-	}
-	for _, set := range []struct {
+	sets := []struct {
 		d     Decision
 		rules []rule
-	}{{Deny, r.deny}, {Ask, r.ask}} {
+	}{{Deny, r.deny}, {Ask, r.ask}}
+	any := false
+	for _, set := range sets {
 		for _, ru := range set.rules {
-			if ru.tool == tool && ru.matches(command) {
+			if ru.tool == tool && ru.re == nil {
 				return set.d, ru.text
+			}
+			any = any || ru.tool == tool
+		}
+	}
+	if !any {
+		return "", ""
+	}
+	if len(command) > maxCommand {
+		return Ask, Unchecked
+	}
+	texts, complete := readings(tool == "PowerShell", command)
+	if !complete {
+		return Ask, Unchecked
+	}
+	for _, set := range sets {
+		for _, ru := range set.rules {
+			if ru.tool != tool {
+				continue
+			}
+			for _, t := range texts {
+				if ru.re.MatchString(t) {
+					return set.d, ru.text
+				}
 			}
 		}
 	}

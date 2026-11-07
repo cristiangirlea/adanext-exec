@@ -54,52 +54,57 @@ func parseRule(text string) (rule, bool) {
 	return r, true
 }
 
-// matches reports whether the rule matches the command or any command within it. The text is
-// read several ways, and a match in any counts: whole; cut at every separator, substitution,
-// bracket, backtick and new line regardless of quotes and comments; and each of those split
-// into commands by a reader that keeps quotes (braces read as blocks, and again as letters).
-// Each command is tried as written and with quotes taken off, and so are the forms with what
-// runs it taken off (leading assignments, shell keywords, wrappers) and, in PowerShell, with an
-// alias read as its cmdlet. Every reading only adds a way to match, so it matches more text than
-// Claude Code does, never on purpose less. Like Claude Code's own rules, it reads text: it is
-// not a parser of every form a shell has.
-func (r rule) matches(command string) bool {
-	if r.re == nil {
-		return true
-	}
-	ps := r.tool == "PowerShell"
-	tried := map[string]bool{}
-	try := func(s string) bool {
-		if tried[s] {
+// maxReadings bounds the text of all the readings of one command, and of the keys that tell
+// them apart, so a long or tangled command cannot hold the hook: Claude Code runs a command
+// whose hook times out.
+const maxReadings = 1 << 21
+
+// readings are the texts a command is matched as; a rule that matches any of them matches the
+// command. The text is read several ways: whole; cut at every separator, substitution, bracket,
+// backtick and new line regardless of quotes and comments; and each of those split into commands
+// by a reader that keeps quotes (braces read as blocks, and again as letters). Each command is
+// read as written and with quotes taken off, and so are the forms with what runs it taken off
+// (leading assignments, shell keywords, wrappers) and, in PowerShell, with an alias read as its
+// cmdlet. Every reading only adds a way to match, so a rule matches more text than in Claude
+// Code, never on purpose less. Like Claude Code's own rules, it reads text: it is not a parser
+// of every form a shell has. It is not complete when the readings would pass maxReadings.
+func readings(ps bool, command string) ([]string, bool) {
+	var texts []string
+	seen := map[string]bool{}
+	budget := maxReadings
+	add := func(s string) bool {
+		if seen[s] {
+			return true
+		}
+		if budget -= len(s); budget < 0 {
 			return false
 		}
-		tried[s] = true
-		return r.re.MatchString(s)
+		seen[s] = true
+		texts = append(texts, s)
+		return true
 	}
-	texts := append([]string{command}, cuts.Split(command, -1)...)
-	for _, text := range texts {
-		if try(strings.TrimSpace(text)) {
-			return true
+	for _, text := range append([]string{command}, cuts.Split(command, -1)...) {
+		if !add(strings.TrimSpace(text)) {
+			return texts, false
 		}
 		for _, braces := range []bool{true, false} {
 			for _, c := range split(ps, text, braces) {
-				if try(c.span) {
-					return true
+				if !add(c.span) {
+					return texts, false
 				}
-				fs, complete := forms(ps, c.tokens)
+				fs, complete := forms(ps, c.tokens, &budget)
 				if !complete {
-					// Too many readings to try: counted as a match, so the rule applies.
-					return true
+					return texts, false
 				}
 				for _, form := range fs {
-					if try(join(form, true)) || try(join(form, false)) {
-						return true
+					if !add(join(form, true)) || !add(join(form, false)) {
+						return texts, false
 					}
 				}
 			}
 		}
 	}
-	return false
+	return texts, true
 }
 
 // cuts are where the text is cut for the reading that ignores quotes and comments; a comment
@@ -128,24 +133,21 @@ var keywords = map[string]bool{
 	"elseif": true, "foreach": true, "for": true, "switch": true, "try": true, "catch": true, "finally": true, "trap": true,
 }
 
-// maxForms bounds the readings of one command, so a long or tangled command cannot hold the
-// hook: Claude Code runs a command whose hook times out.
-const maxForms = 4096
-
 // forms are the token lists a command is matched as: the command without its braces, each
 // piece between braces (a block's commands), and of each the forms with what runs it taken off.
-// It is not complete when there were more than maxForms to try.
-func forms(ps bool, tokens []token) ([][]token, bool) {
+// Their keys are taken from the budget; it is not complete when the budget runs out.
+func forms(ps bool, tokens []token, budget *int) ([][]token, bool) {
 	var out [][]token
 	seen := map[string]bool{}
-	visits := 0
 	var walk func(w []token)
 	walk = func(w []token) {
-		if len(w) == 0 || visits > maxForms {
+		if len(w) == 0 || *budget < 0 {
 			return
 		}
-		visits++
 		key := join(w, true) + string(rune(0)) + join(w, false)
+		if *budget -= len(key); *budget < 0 {
+			return
+		}
 		if seen[key] {
 			return
 		}
@@ -184,7 +186,7 @@ func forms(ps bool, tokens []token) ([][]token, bool) {
 	}
 	walk(piece)
 	walk(whole)
-	return out, visits <= maxForms
+	return out, *budget >= 0
 }
 
 func isAssignment(w string) bool {

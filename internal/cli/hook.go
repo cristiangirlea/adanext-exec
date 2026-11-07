@@ -174,8 +174,8 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case userDecision == claudecode.Ask:
 		answer.Decision = "ask"
 		answer.Reason = fmt.Sprintf("your Claude Code rule %q asks. The command:\n%s", userRule, command)
-		if userRule == claudecode.LongCommand {
-			answer.Reason = fmt.Sprintf("the command is too long to check against your Claude Code rules (%s). The command:\n%s", userRule, command)
+		if userRule == claudecode.Unchecked {
+			answer.Reason = fmt.Sprintf("the command is too long or tangled to check against your Claude Code rules. The command:\n%s", command)
 		}
 	default:
 		answer.Decision = "allow"

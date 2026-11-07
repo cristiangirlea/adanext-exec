@@ -82,7 +82,9 @@ Newest first.
   less: each command of a compound one (its own splitter, which keeps the text as written next
   to the text with quotes taken off), `{ }` blocks and substitutions included, is tried both
   ways; a reading only ever adds candidates. After a wrapper every word is tried, since its
-  options cannot be parsed for every form. A
+  options cannot be parsed for every form. A command is read once for all the rules, within a
+  2 MiB budget, and one over 10,000 characters or past the budget asks, as Claude Code asks
+  about long commands: a hook that times out lets the command run. A
   rewrite that would let Claude Code's own matcher see the original (`if false; then <text>;
   fi; ...`) was weighed and dropped: the text could close the `if` and run outside `run`. The
   binary is the hook itself (#7), and a rewrite names its build (`--hook-build`), which `run`

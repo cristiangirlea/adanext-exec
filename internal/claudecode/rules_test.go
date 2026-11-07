@@ -311,25 +311,23 @@ func TestRulesMatchWhereTheReaderIsUnsure(t *testing.T) {
 	}
 }
 
-// A long or tangled command is answered at once: over 10000 characters it asks when there are
-// rules for the tool, and more readings than the bound count as a match.
+// A long or tangled command is answered at once: over 10000 characters, or with more readings
+// than the bound, it asks when there are rules for the tool, read once for all of them.
 func TestLongAndTangledCommandsAreBounded(t *testing.T) {
-	r := rulesOf(t, `{"permissions": {"deny": ["Bash(never-matches)"]}}`)
+	r := rulesOf(t, `{"permissions": {"deny": ["Bash(never-1)", "Bash(never-2)", "Bash(never-3)", "Bash(never-4)", "Bash(pwd)"]}}`)
 	for name, cmd := range map[string]string{
 		"substitutions": "echo " + strings.Repeat("a$(true)", 100000),
 		"wrappers":      strings.Repeat("time ", 1900) + "echo ok",
+		"assignments":   strings.Repeat("a= ", 3332) + "pwd",
 		"braces":        strings.Repeat("{ a } ", 1600),
 	} {
 		start := time.Now()
 		d, rule := r.Check("Bash", cmd)
-		if took := time.Since(start); took > 3*time.Second {
+		if took := time.Since(start); took > 500*time.Millisecond {
 			t.Errorf("%s: took %v", name, took)
 		}
-		if len(cmd) > maxCommand && (d != Ask || rule != LongCommand) {
-			t.Errorf("%s (%d characters): %q %q, want ask", name, len(cmd), d, rule)
-		}
-		if name == "wrappers" && d != Deny {
-			t.Errorf("wrappers: %q, want the rule applied once the readings run out", d)
+		if name != "braces" && (d != Ask || rule != Unchecked) {
+			t.Errorf("%s (%d characters): %q %q, want ask as unchecked", name, len(cmd), d, rule)
 		}
 	}
 	if d, _ := r.Check("PowerShell", strings.Repeat("x", maxCommand+1)); d != "" {
