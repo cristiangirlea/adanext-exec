@@ -85,6 +85,9 @@ Newest first.
   asked for that, and for cleanup that never removes a cgroup the broker did not make. CI hands
   the Linux runner a delegated cgroup through sudo, as systemd would; the tests run
   unelevated.
+- 2026-11-07: The memory-ceiling test's helper takes its memory in 16 MiB steps with a 10 ms pause
+  between them (PR #62, #61). On a newer macOS runner image it took all 512 MiB between two of
+  the watch's reads, so the peak stood past the test's 512 MiB bound; the bound stays.
 - 2026-11-07: M6b (PR #59, #57). Claude Code gives a hook no merged view of its rules, so the
   hook reads the files Claude Code reads (managed with its drop-ins, user, project, local and
   the repository's local file) and applies only their Bash and PowerShell deny and ask rules,
