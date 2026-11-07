@@ -38,6 +38,13 @@ type Result struct {
 	// false with a limit set means the limit was not enforced here, and the command ran
 	// without it.
 	MemoryEnforced bool
+	// MemoryHard is true when the kernel held Command.MemoryLimit: a cgroup of the command's own
+	// on Linux, the Job Object on Windows. On Linux it holds every process that stays in that
+	// cgroup; one the same user moves out is held only by the watch, which stops the tree when a
+	// read finds it (Run returns the error), and can miss one that leaves and ends between two
+	// reads. False with MemoryEnforced true means the ceiling was watched (Linux and macOS), so a
+	// spike shorter than one read could pass.
+	MemoryHard bool
 	// MemoryExceeded is true when the command's tree went over Command.MemoryLimit and was
 	// stopped.
 	MemoryExceeded bool
@@ -234,7 +241,11 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 		return Result{}, false, err
 	}
 	start := time.Now()
-	t, err := tree.StartLimited(cmd, uint64(c.MemoryLimit))
+	ceiling := c.MemoryCeiling
+	if ceiling == "" && c.Policy != nil {
+		ceiling = c.Policy.ceiling
+	}
+	t, err := tree.StartCeiling(cmd, uint64(c.MemoryLimit), ceiling.treeCeiling())
 	in.started()
 	out.started()
 	if err != nil {
@@ -275,6 +286,7 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 	// The memory watch ends here, while the leader still holds its group id: once it is
 	// reaped, the id can name another program's group.
 	res.MemoryEnforced = c.MemoryLimit > 0 && t.MemoryEnforced()
+	res.MemoryHard = c.MemoryLimit > 0 && t.MemoryHard()
 	exceeded, peak, memErr := t.FinalMemory()
 	res.MemoryExceeded, res.PeakMemory = exceeded, int64(peak)
 	if memErr != nil {
@@ -282,6 +294,9 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 		errs = append(errs, fmt.Errorf("watch the memory ceiling: %w", memErr))
 	}
 	err = cmd.Wait()
+	if err := t.RemoveCgroup(); err != nil {
+		errs = append(errs, fmt.Errorf("remove the command's cgroup: %w", err))
+	}
 	in.close()
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {

@@ -98,7 +98,8 @@ M2b delivers the policy as `broker.Policy`, read by `ParsePolicy` or `LoadPolicy
   "rules": [
     {"name": "git-push", "decision": "ask"},
     {"name": "no-force", "match": "--force\\b", "decision": "refuse"}
-  ]
+  ],
+  "memory_ceiling": "auto"
 }
 ```
 
@@ -125,7 +126,8 @@ M2b delivers the policy as `broker.Policy`, read by `ParsePolicy` or `LoadPolicy
   patterns were written to refuse broadly; to allow precisely, write a rule of the policy's own.
 - A policy that is not valid is an error, never a partial policy: an unknown field or rule name,
   a name used twice, a decision (or a `default`, also `""` or `null`) other than allow, ask or
-  refuse, a match that does not compile, or a version other than 1. With the error comes a zero
+  refuse, a `memory_ceiling` other than auto, cgroup or watchdog, a match that does not compile,
+  or a version other than 1. With the error comes a zero
   `Policy`, which refuses everything, so a caller that misses the error runs nothing.
   `LoadPolicy` reads a regular file of at most 1 MiB, following a link; it opens without
   waiting, so a pipe at the name is refused rather than hanging. On Linux and macOS the file
@@ -201,7 +203,54 @@ Per command:
     saw, which can be past the ceiling by what the tree took in one read. A tree process whose
     memory cannot be read (another user's) stops the tree, as the ceiling can no longer be
     watched, and the result carries the error. Where the broker cannot read even its own memory, the ceiling is reported
-    as not enforced. A hard ceiling through a delegated cgroup is M5c.
+    as not enforced. On Linux the kernel can hold the ceiling instead (M5c, next).
+  - Linux, a delegated cgroup (M5c): the kernel holds the ceiling through cgroup v2's own files,
+    with nothing but the standard library. `Command.MemoryCeiling` (`run --memory-ceiling`, or
+    the policy's `memory_ceiling`, in that order; auto when none says) chooses: `auto` uses a
+    cgroup where one can be made and the watch otherwise, `cgroup` uses a cgroup or does not run
+    the command (`ErrNoHardCeiling`, exit 126), and `watchdog` never touches cgroups.
+    `Result.MemoryHard` (the audit's `memory_hard`) says whether the kernel held it; Windows'
+    job always does, macOS never can.
+    - The first command with a ceiling sets up the caller's own cgroup, once per process. It
+      must be cgroup v2 (`/sys/fs/cgroup` is one; v1 or a hybrid setup is not), not the root,
+      offer the memory controller, hold the caller alone, and let the caller start a child
+      straight into it (clone3 with `CLONE_INTO_CGROUP`, Linux 5.7, tried once with a program
+      that cannot exist, so only its exec can fail). Then the caller moves itself into a leaf of
+      its own, `adanext-exec-broker`, since a cgroup holding processes cannot hand controllers
+      to its children, and turns the memory controller on for them. A step that fails puts back
+      what the earlier ones changed, and says so when it cannot. A cgroup the broker did not make
+      is never removed, whatever its name; what a broker that crashed left goes when systemd
+      stops the unit.
+    - Each command then gets a cgroup of its own, `adanext-exec-cmd-<random>`, beside that leaf:
+      `memory.max` is the ceiling, `memory.swap.max` 0 where swap is accounted, and
+      `memory.oom.group` 1, so the kernel's out-of-memory killer stops the whole cgroup at
+      once. The command is started straight into it, so nothing it starts is ever outside it,
+      and the kill writes `cgroup.kill` (Linux 5.14) before the tree's own kill. An `oom_kill`
+      in `memory.events` marks the command over its ceiling (122), and `memory.peak` (Linux
+      5.19) is its peak. The cgroup is removed once the command is reaped; one that cannot be
+      is reported (exit 120).
+    - The watch runs as well, also where the broker cannot read its own memory, and reads where
+      each process of the tree is. The same user may move a process out of the command's cgroup
+      (into the broker's leaf), where the kernel no longer holds the ceiling for it, and no
+      arrangement of the same user's files can forbid it: a delegated cgroup is the user's. The
+      watch stops the tree when a read finds a process outside, and the result carries the error
+      (exit 120). That is sampled, as the watch is: a process that leaves, allocates and ends
+      between two reads (100 ms) is not seen. So hard means held by the kernel for every process
+      that stays in the command's cgroup, which a command leaves only on purpose; a Job Object on
+      Windows cannot be left at all. The ceiling protects the machine from a runaway command, not
+      from one set on escaping it, as the policy does not either (#21).
+    - A step that failed and could not be undone (the caller left in the leaf, a cgroup that
+      stays) runs the command in no mode, with the error: the state is not what the fallback
+      assumes.
+    - Which hosts get it: a caller started in a cgroup delegated to its user and holding it
+      alone, as a systemd unit with `Delegate=yes` is (a user service, or `systemd-run --user
+      --scope -p Delegate=yes adanext-exec run ...`). The serve daemon only hands out slots, so
+      the cgroup is always made by the process that runs the command: `adanext-exec run`, or a
+      program using the SDK, such as adad. `run` started by another program shares that
+      program's cgroup and is watched instead under `auto`. Containers without a delegated
+      cgroup namespace, cgroup v1 and hybrid hosts, kernels before 5.7, and a seccomp filter
+      that refuses clone3 get the watch. Moving the caller into the leaf is the one change the
+      broker makes to the caller itself.
 - **Output cap** (head and tail kept, the middle counted), as harness's bounded buffer does.
   `Command.OutputCap` bounds each stream (stdout and stderr, or one stream when both go to the
   same writer): its first two thirds pass through as the command writes them, the rest is held,
@@ -247,7 +296,7 @@ Across commands (daemon):
 | Concern | Windows | Linux | macOS |
 |---|---|---|---|
 | Whole-tree kill | Job Object with KILL_ON_JOB_CLOSE (from harness `internal/tools/exec_windows.go`), the command started suspended and assigned before it runs; never breakaway | New process group (`Setpgid`) and a marker in the environment; kill the group, every process carrying the marker, and their descendants; the leader dies with its caller (`Pdeathsig`); cgroup v2 when delegated | The same, without a parent-death signal |
-| Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`; the job's peak, read every 50 ms, stops the tree once past it (M5a), so the command is not left with failing allocations | cgroup v2 `memory.max` when a delegated cgroup is available | none |
+| Memory ceiling (hard backstop) | Job Object `JobMemoryLimit`; the job's peak, read every 50 ms, stops the tree once past it (M5a), so the command is not left with failing allocations | cgroup v2 `memory.max` in a cgroup of the command's own, where the caller holds a delegated cgroup alone (M5c; `--memory-ceiling`) | none |
 | Memory ceiling (portable, best effort: a short spike between polls can pass) | (the job's limit is enforced instead) | a watch reads the tree's resident memory every 100 ms and kills the tree past the ceiling (M5b) | the same watch, through `proc_info`; where it cannot read its own memory, the ceiling is reported as not enforced |
 | CPU priority for heavy work | Job Object priority class | `nice` / cgroup `cpu.weight` | `nice` |
 
@@ -325,7 +374,7 @@ memory ceiling, refused, not run), `decision` and `rule` (M2b: the policy's verd
 that gave it), `approved` (M2c: a person's answer, when one was asked), `queue_wait_ms` (M4b:
 the wait for a heavy-command slot, when there was one), `memory_limit`, `memory_enforced` and
 `peak_memory` (M5a: the ceiling asked for, whether it was enforced, and the tree's peak where
-known), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
+known), `memory_hard` (M5c: whether the kernel held it), `exit_code`, `signal`, `duration_ms`, `output_cut` and `error`. A command
 Run did not run gets its line too, with the reason; a command whose line cannot be opened is
 not run. The date is the start's in UTC; `DefaultAuditDir` is the user's state directory
 (`$XDG_STATE_HOME` or `~/.local/state` on Linux, `~/Library/Application Support` on macOS,

@@ -24,17 +24,26 @@ var probeRSS = residentBytes
 // says so: a spike shorter than one read can pass. Where the platform's memory cannot be read
 // here, the ceiling is not enforced, and MemoryEnforced says so.
 func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) {
+	return startWatched(cmd, memoryLimit, nil)
+}
+
+// startWatched is StartLimited for a command started in the cgroup cg (nil for none), which the
+// tree holds before its watch starts.
+func startWatched(cmd *exec.Cmd, memoryLimit uint64, cg *cgroup) (*Tree, error) {
 	t, err := Start(cmd)
 	if err != nil {
 		return nil, err
 	}
+	t.cg = cg
 	t.limit = memoryLimit
 	t.readRSS = residentBytes
 	t.readMark = func(pid int) (bool, error) { return envHas(pid, t.marker) }
 	if memoryLimit > 0 {
 		// A platform that cannot read the broker's own memory cannot read the tree's either:
-		// then nothing is watched, and MemoryEnforced says so.
-		if _, err := probeRSS(os.Getpid()); err == nil {
+		// then nothing is watched, and MemoryEnforced says so. A tree in a cgroup is watched
+		// whatever the probe says, for a process that leaves it: a memory it cannot read then
+		// stops the tree.
+		if _, err := probeRSS(os.Getpid()); err == nil || cg != nil {
 			t.enforced = true
 			t.watchMemory()
 		}
@@ -125,11 +134,19 @@ func (t *Tree) treeMemory(marks map[pidStart]bool) (uint64, error) {
 		p   proc
 		rss uint64
 		err error
+		// Where the process is, when the kernel holds the ceiling and it is outside the
+		// command's cgroup, or why that could not be read.
+		outside string
+		cgErr   error
 	}
 	var samples []sample
 	for _, p := range t.members(procs, byGroup, marked) {
-		rss, err := read(p.pid)
-		samples = append(samples, sample{p, rss, err})
+		s := sample{p: p}
+		s.rss, s.err = read(p.pid)
+		if t.cg != nil {
+			s.outside, s.cgErr = t.cg.outside(p.pid)
+		}
+		samples = append(samples, s)
 	}
 	for key := range marks {
 		if !seen[key] {
@@ -156,6 +173,13 @@ func (t *Tree) treeMemory(marks map[pidStart]bool) (uint64, error) {
 				continue
 			}
 			return 0, fmt.Errorf("read the memory of process %d: %w", s.p.pid, s.err)
+		}
+		if s.cgErr != nil && !procEnded(s.cgErr) {
+			return 0, fmt.Errorf("read the cgroup of process %d: %w", s.p.pid, s.cgErr)
+		}
+		if s.outside != "" {
+			// The kernel no longer holds the ceiling for it: stop the tree, never call it hard.
+			return 0, fmt.Errorf("process %d left the command's cgroup for %s", s.p.pid, s.outside)
 		}
 		total += s.rss
 	}
@@ -185,16 +209,29 @@ func (t *Tree) setMemoryErr(err error) {
 	}
 }
 
-// MemoryEnforced reports whether a ceiling was set and is watched here.
-func (t *Tree) MemoryEnforced() bool { return t.enforced }
+// MemoryEnforced reports whether a ceiling was set and is watched or held here.
+func (t *Tree) MemoryEnforced() bool { return t.enforced || t.cg != nil }
+
+// MemoryHard reports whether the kernel holds the ceiling: the command runs in a cgroup of its
+// own with memory.max set (StartCeiling, Linux).
+func (t *Tree) MemoryHard() bool { return t.cg != nil }
 
 // FinalMemory is the tree's memory once the command has ended: whether it passed its ceiling,
-// the most resident memory the watch saw it hold (0 when nothing was watched), and why the
-// ceiling could not be watched, when it could not. It stops the watch and waits for it first.
+// the most memory the watch saw it hold or its cgroup's peak, whichever is more (0 when neither
+// is known), and why the ceiling could not be watched, when it could not. It stops the watch
+// and waits for it first. A tree in a cgroup passed its ceiling also when the kernel's
+// out-of-memory killer acted in that cgroup.
 func (t *Tree) FinalMemory() (exceeded bool, peak uint64, err error) {
 	t.stopWatching()
 	t.mu.Lock()
 	err = t.memoryErr
 	t.mu.Unlock()
-	return t.exceeded.Load(), t.peakSeen.Load(), err
+	exceeded, peak = t.exceeded.Load(), t.peakSeen.Load()
+	if t.cg != nil {
+		over, cgPeak, cgErr := t.cg.final()
+		exceeded = exceeded || over
+		peak = max(peak, cgPeak)
+		err = errors.Join(err, cgErr)
+	}
+	return exceeded, peak, err
 }

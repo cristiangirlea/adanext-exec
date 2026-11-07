@@ -93,6 +93,13 @@ func (t *Tree) queryPeak() (uint64, error) {
 // Windows, through the job.
 func (t *Tree) MemoryEnforced() bool { return t.limit > 0 }
 
+// MemoryHard reports whether the kernel holds the ceiling: on Windows the job does, whenever
+// there is one.
+func (t *Tree) MemoryHard() bool { return t.limit > 0 }
+
+// RemoveCgroup has nothing to remove on Windows: the job goes with Close.
+func (t *Tree) RemoveCgroup() error { return nil }
+
 // FinalMemory is the tree's memory once the command has ended: whether it passed its ceiling,
 // its peak in bytes (committed memory, a refused commit counted), and why the ceiling could
 // not be watched, when it could not. It first stops the watch and waits for it, so nothing it

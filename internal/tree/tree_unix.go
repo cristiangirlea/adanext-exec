@@ -52,6 +52,9 @@ type Tree struct {
 	// marker; tests replace them.
 	readRSS  func(pid int) (uint64, error)
 	readMark func(pid int) (bool, error)
+
+	// cg is the command's own cgroup, where the kernel holds its ceiling (Linux, StartCeiling).
+	cg *cgroup
 }
 
 // Start starts cmd as the leader of a new process group, with the tree's marker added to its
@@ -145,7 +148,18 @@ func (t *Tree) WaitExit() error {
 //
 // Without the leader's start time, nothing marks where the tree's processes begin: then only
 // the group is killed, and the error says so.
+//
+// A tree in a cgroup of its own (StartCeiling) has everything in that cgroup killed first.
 func (t *Tree) Kill() error {
+	if t.cg == nil {
+		return t.killTree()
+	}
+	cgErr := t.cg.kill()
+	return errors.Join(cgErr, t.killTree())
+}
+
+// killTree kills the group, the marked processes and their descendants, as Kill says.
+func (t *Tree) killTree() error {
 	t.mu.Lock()
 	lost := t.lost
 	t.mu.Unlock()
@@ -263,9 +277,21 @@ func (t *Tree) members(procs []proc, byGroup bool, marked func(int) bool) []proc
 	return found
 }
 
-// Close lets the thread that started the command go.
+// RemoveCgroup removes the command's cgroup (StartCeiling, Linux) once the command has been
+// reaped, and says why when it could not; a tree with none, or one already removed, is not an
+// error.
+func (t *Tree) RemoveCgroup() error {
+	if t.cg == nil {
+		return nil
+	}
+	return t.cg.remove()
+}
+
+// Close lets the thread that started the command go, and removes the command's cgroup if
+// RemoveCgroup did not.
 func (t *Tree) Close() {
 	t.stopWatching()
+	_ = t.RemoveCgroup()
 	t.release()
 }
 

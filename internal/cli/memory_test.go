@@ -40,6 +40,34 @@ func TestABadMemorySizeIsAUsageError(t *testing.T) {
 	}
 }
 
+func TestABadMemoryCeilingIsAUsageError(t *testing.T) {
+	setup(t)
+	if code, _, _ := main(t, context.Background(), "", "", "run", "--memory", "64M", "--memory-ceiling", "hard", "--", "x"); code != ExitUsage {
+		t.Errorf("code %d, want 121", code)
+	}
+}
+
+// --memory-ceiling cgroup runs a command only where the kernel holds its ceiling: never on
+// macOS, always on Windows, and on Linux where a delegated cgroup can be divided. Not run is
+// 126. watchdog runs it everywhere.
+func TestTheMemoryCeilingFlag(t *testing.T) {
+	setup(t)
+	code, _, stderr := main(t, context.Background(), "", "exit", "run", "--memory", "256M", "--memory-ceiling", "cgroup", "--")
+	switch {
+	case runtime.GOOS == "darwin" || runtime.GOOS == "linux" && code != 0:
+		if code != ExitCannotRun || !strings.Contains(stderr, broker.ErrNoHardCeiling.Error()) {
+			t.Errorf("cgroup: code %d, stderr %q; want 126 and why", code, stderr)
+		}
+	default:
+		if code != 0 {
+			t.Errorf("cgroup: code %d, stderr %q; want it run", code, stderr)
+		}
+	}
+	if code, _, stderr := main(t, context.Background(), "", "exit", "run", "--memory", "256M", "--memory-ceiling", "watchdog", "--"); code != 0 {
+		t.Errorf("watchdog: code %d, stderr %q; want it run", code, stderr)
+	}
+}
+
 // A failure after the run outranks the ceiling: 120, not 122, so the broker's failure is not
 // hidden.
 func TestABrokerFailureOutranksTheMemoryCeiling(t *testing.T) {

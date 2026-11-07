@@ -85,7 +85,31 @@ func helperPlatform(mode string) {
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(rep)
 		os.Exit(0)
+	case "cgroup-run":
+		// A caller of Run with a ceiling the kernel must hold, alone in its cgroup, as a
+		// service in a delegated cgroup would be; it reports what Run said.
+		c := helper("alloc", "ADANEXT_TEST_ALLOC_MB=512")
+		c.MemoryLimit = 128 * mib
+		c.MemoryCeiling = CeilingCgroup
+		c.Timeout = time.Minute
+		c.Audit = &Audit{Dir: os.Getenv("ADANEXT_TEST_AUDIT_DIR")}
+		res, err := Run(context.Background(), c)
+		_ = json.NewEncoder(os.Stdout).Encode(cgroupReport{Err: errString(err), Result: res})
+		os.Exit(0)
 	}
+}
+
+// cgroupReport is what the cgroup-run helper says.
+type cgroupReport struct {
+	Err    string
+	Result Result
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func TestRunKillsAnOrphanThatLeftTheGroup(t *testing.T) {

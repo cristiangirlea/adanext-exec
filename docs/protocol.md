@@ -31,6 +31,7 @@ exits.
 | `--socket PATH` | The daemon's socket, instead of `<state dir>/adanext-exec/daemon/daemon.sock`; implies `--slots`. |
 | `--max-wait D` | With `--slots`: give up after waiting D for a slot. The wait counts toward no `--timeout`, which starts with the command. |
 | `--memory SIZE` | A ceiling on the memory of the command and everything it starts, together: bytes, or a whole number with `K`, `M` or `G` (powers of 1024). Where the platform does not enforce it, the binary says so on standard error and the command runs without it. |
+| `--memory-ceiling MODE` | How `--memory` is held on Linux: `auto` in a cgroup of the command's own where one can be made, and watched otherwise; `cgroup` by the kernel or not at all (not run, 126); `watchdog` only watched. Without it, the policy's `memory_ceiling`, else `auto`. Windows' job always holds the ceiling; macOS can only watch it, so `cgroup` runs nothing there. [design.md](design.md) says which hosts have a cgroup to give. |
 | `--agent`, `--session`, `--run-id` | Who asked, for the audit; self-reported. |
 
 **The policy is always set.** It comes from `--policy`, `--profile`, or
@@ -60,7 +61,7 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
-| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, or `--hook-build` names another build. |
+| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, `--hook-build` names another build, or `--memory-ceiling cgroup` (or the policy's) asked for a hard ceiling that cannot be held here. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
 | 128+n | The command was ended by signal n (Linux and macOS), as shells report it. |
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
