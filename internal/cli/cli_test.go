@@ -66,6 +66,12 @@ func helperMain(mode string) {
 		for _, k := range []string{"GOFLAGS", "GOMAXPROCS", "MAKEFLAGS", "CARGO_BUILD_JOBS"} {
 			fmt.Fprintf(os.Stdout, "%s=%s;", k, os.Getenv(k))
 		}
+	case "main":
+		// The binary itself, as a hook's rewrite runs it, with the test's configuration.
+		isElevated = func() bool { return false }
+		configDir = func() (string, error) { return os.Getenv("ADANEXT_CLI_CONFIG"), nil }
+		auditDir = func() (string, error) { return os.Getenv("ADANEXT_CLI_AUDIT"), nil }
+		os.Exit(Main(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	case "args":
 		// Its own arguments, after the test flag, one per line, and a line on standard error.
 		for _, a := range os.Args[2:] {
