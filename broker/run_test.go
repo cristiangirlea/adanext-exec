@@ -69,15 +69,20 @@ func TestHelperProcess(t *testing.T) {
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 		os.Exit(0)
 	case "alloc":
-		// Takes and touches ADANEXT_TEST_ALLOC_MB of memory, then waits.
+		// Takes and touches ADANEXT_TEST_ALLOC_MB of memory, then waits. It pauses 10 ms after
+		// every 16 MiB, so a watch that reads every 100 ms sees the tree cross a ceiling well
+		// before it holds it all, however fast the machine allocates.
 		mb, _ := strconv.Atoi(os.Getenv("ADANEXT_TEST_ALLOC_MB"))
 		held := make([][]byte, 0, mb)
-		for range mb {
+		for n := range mb {
 			b := make([]byte, 1<<20)
 			for i := 0; i < len(b); i += 4096 {
 				b[i] = 1
 			}
 			held = append(held, b)
+			if n%16 == 15 {
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
 		fmt.Fprint(os.Stdout, len(held))
 		time.Sleep(2 * time.Second)
