@@ -341,6 +341,9 @@ func shellCommands(shell, script string) [][]string {
 	return cmds
 }
 
+// ShellCommands is shellCommands for the hook's matching of Claude Code's rules.
+func ShellCommands(shell, script string) [][]string { return shellCommands(shell, script) }
+
 func programName(p string) string {
 	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
 		p = p[i+1:]
