@@ -24,7 +24,9 @@ macOS, with one policy, one set of limits and one audit log.
 
 1. **A Go SDK** (`github.com/cristiangirlea/adanext-exec/broker`): Go programs can import it and
    run commands through it directly. Standard library only. hrn and `adad` do not: they call the
-   binary, so the gate enforces from its own process (M7, M8).
+   binary (M7, M8), which always sets a policy and an audit, keeps the per-process parts (the
+   parent-death thread, the console, the cgroup setup that moves its own process) in a process
+   of its own, and releases apart from them.
 2. **A binary, `adanext-exec`**, that is three things:
    - `adanext-exec run [--profile P] [--approved RULE] -- <command…>`: run one command under the
      broker and exit with its code. Usable from any shell, hook or language. `--approved RULE`
@@ -146,7 +148,7 @@ M2b delivers the policy as `broker.Policy`, read by `ParsePolicy` or `LoadPolicy
 
 ## The command
 
-A command is either an argv, run directly with no shell (hrn and `adad` pass these), or shell
+A command is either an argv, run directly with no shell (an SDK caller can pass these), or shell
 text with a named shell (Claude Code passes Git Bash or PowerShell text): `sh`, `bash` (Git Bash
 on Windows), `powershell` (System32's Windows PowerShell), `pwsh` and `cmd` (System32's
 `cmd.exe /d /s /c`). The shell is found in a fixed place or in PATH, and the text reaches it
@@ -247,8 +249,9 @@ Per command:
       alone, as a systemd unit with `Delegate=yes` is (a user service, or `systemd-run --user
       --scope -p Delegate=yes adanext-exec run ...`). The serve daemon only hands out slots, so
       the cgroup is always made by the process that runs the command: `adanext-exec run`, or a
-      program using the SDK, such as adad. `run` started by another program shares that
-      program's cgroup and is watched instead under `auto`. Containers without a delegated
+      program using the SDK. `run` started by another program into that program's own cgroup
+      shares it, and is watched instead under `auto`; a program that starts each `run` into a
+      delegated cgroup of its own, as adad will (M8), gets the kernel's ceiling. Containers without a delegated
       cgroup namespace, cgroup v1 and hybrid hosts, kernels before 5.7, and a seccomp filter
       that refuses clone3 get the watch. Moving the caller into the leaf is the one change the
       broker makes to the caller itself.
@@ -342,7 +345,7 @@ process that both clears its environment and is orphaned before the kill (a doub
 daemon started with `env -i`), one the user cannot read (setuid, or made undumpable), and work
 handed to another service (docker, `systemd-run`, launchd), which was never the command's child.
 Output such a process holds open is reported, not waited for. A per-user subreaper
-(`PR_SET_CHILD_SUBREAPER`) was weighed and left out: it changes the whole caller (hrn, `adad`),
+(`PR_SET_CHILD_SUBREAPER`) was weighed and left out: it changes the whole caller (`run`, or an SDK user),
 whose other children's orphans would then become zombies the broker could not tell apart.
 
 When the caller itself is killed before it can kill the tree (#11): on Windows the job closes
@@ -469,12 +472,15 @@ or a sandbox, outside this project's first scope.
    below: `run` cannot tell who wrote `--approved`, and does not need to, since the flag only
    confirms an ask the policy itself gives.
 2. **hrn**: `internal/tools` runs shell commands through `adanext-exec run` when the gate is on,
-   with a version handshake, and its guard rules move here, with harness keeping a thin adapter.
+   after a handshake (an `adanext-exec check --json` request whose answer must carry
+   `adanext-exec/1`), and its guard rules move here, with harness keeping a thin adapter.
    harness never imports this module, and stays standard library only.
 3. **AdaNext OS**: `adad` runs every task command through `adanext-exec run`, each in a cgroup
    of its own where it holds a delegated one, so the kernel holds the ceiling; the policy and
-   limits become per-project profiles. A small dependency-free client package for this comes
-   with M8.
+   limits become per-project profiles. A small dependency-free client for this comes with M8, as
+   a module of its own (`client/`, with its own `go.mod`), so adad requires only that, never the
+   broker; it also removes each run's cgroup once `run` has exited, since `run` cannot remove the
+   cgroup it is in.
 4. **Codex and others**: through `adanext-exec run` as their shell, where they allow one.
 
 ## Milestones
