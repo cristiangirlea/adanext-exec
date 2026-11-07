@@ -19,7 +19,7 @@ exits.
 | Flag | Meaning |
 |---|---|
 | `--shell NAME` | The one argument after `--` is shell text for `sh`, `bash`, `powershell`, `pwsh` or `cmd`. |
-| `--hook-version V` | The build of the hook that wrote this command line. `run` refuses (126) when it is another build than its own. |
+| `--hook-build V` | The build of the hook that wrote this command line. `run` refuses (126) when it is another build than its own. |
 | `--script-b64 B` | With `--shell`, and nothing after it: the shell text as URL-safe base64 without padding (RFC 4648, section 5), in place of the argument after `--`. What the hook's rewrite writes, so no shell between the hook and `run` reads the text. |
 | `--policy FILE` | The policy file. |
 | `--profile NAME` | The policy in `<config dir>/adanext-exec/profiles/NAME.json`; NAME is lower-case letters, digits and dashes. |
@@ -60,7 +60,7 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
-| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, or `--hook-version` names another build. |
+| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, or `--hook-build` names another build. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
 | 128+n | The command was ended by signal n (Linux and macOS), as shells report it. |
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
@@ -144,9 +144,9 @@ The rewrite keeps every other field of `tool_input` and replaces `command` with 
 itself (its own path) running the text through `run`:
 
 ```
-'<binary>' 'run' '--hook-version' '<build>' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
+'<binary>' 'run' '--hook-build' '<build>' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
   '--agent' 'claude-code' ['--session' '<session_id>'] '--script-b64' '<text>'
-& '<binary>' 'run' '--hook-version' '<build>' '--shell' 'pwsh' ...
+& '<binary>' 'run' '--hook-build' '<build>' '--shell' 'pwsh' ...
 ```
 
 Each word is single-quoted for the tool's shell (Bash, or PowerShell after its call operator),

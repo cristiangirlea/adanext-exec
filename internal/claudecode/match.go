@@ -56,13 +56,22 @@ func parseRule(text string) (rule, bool) {
 	return r, true
 }
 
-// matches reports whether the rule matches the command or any command within it: each command
-// of a compound one, of a group, a substitution or a loop's body, as written and with what runs
-// it taken off (leading assignments, shell keywords, and the wrappers Claude Code looks
-// through). PowerShell's aliases count as the cmdlets they name. It reads more text as a match
-// than Claude Code does (quotes are taken off), never on purpose less.
+// matches reports whether the rule matches the command or any command within it: the text as
+// written, whole and between separators; and each command of a compound one, of a group, a
+// block, a substitution or a loop's body, with quotes taken off, as written and with what runs
+// it taken off (leading assignments, shell keywords, and wrappers). PowerShell's aliases count
+// as the cmdlets they name. It reads more text as a match than Claude Code does, never on
+// purpose less.
 func (r rule) matches(command string) bool {
 	if r.re == nil {
+		return true
+	}
+	for _, seg := range separators.Split(command, -1) {
+		if seg = strings.TrimSpace(seg); seg != "" && r.re.MatchString(seg) {
+			return true
+		}
+	}
+	if r.re.MatchString(strings.TrimSpace(command)) {
 		return true
 	}
 	shell := "bash"
@@ -71,7 +80,7 @@ func (r rule) matches(command string) bool {
 	}
 	for _, words := range daemon.ShellCommands(shell, command) {
 		for _, form := range forms(r.tool, words) {
-			if len(form) > 0 && r.re.MatchString(strings.Join(form, " ")) {
+			if r.re.MatchString(strings.Join(form, " ")) {
 				return true
 			}
 		}
@@ -79,69 +88,73 @@ func (r rule) matches(command string) bool {
 	return false
 }
 
-// forms are the ways a command's words are matched: as written, and with what runs it taken off.
-func forms(tool string, words []string) [][]string {
-	out := [][]string{words}
-	if tool == "PowerShell" {
-		if cmdlet, ok := aliases[strings.ToLower(words[0])]; ok {
-			out = append(out, append([]string{cmdlet}, words[1:]...))
-		}
-		return out
-	}
-	for {
-		next := unwrap(words)
-		if len(next) == len(words) || len(next) == 0 {
-			return out
-		}
-		words = next
-		out = append(out, words)
-	}
+// separators split the text as written into the pieces a rule with quotes in it is matched
+// against. Splitting inside quotes too only adds pieces.
+var separators = regexp.MustCompile("&&|\\|\\||\\$\\(|[;|&{}()`\\r\\n]")
+
+// wrappers run the command after their own arguments. Their options are not parsed: the command
+// is looked for at every word after the wrapper.
+var wrappers = map[string]bool{"timeout": true, "time": true, "nice": true, "nohup": true, "stdbuf": true, "command": true, "builtin": true, "noglob": true, "xargs": true}
+
+// keywords start a command without being it, in Bash and in PowerShell (lower case).
+var keywords = map[string]bool{
+	"!": true, "if": true, "then": true, "else": true, "elif": true, "do": true, "while": true, "until": true,
+	"elseif": true, "foreach": true, "for": true, "switch": true, "try": true, "catch": true, "finally": true, "trap": true,
 }
 
-// keywords start a command without being it.
-var keywords = map[string]bool{"!": true, "{": true, "}": true, "if": true, "then": true, "else": true, "elif": true, "do": true, "while": true, "until": true, "fi": true, "done": true}
-
-// unwrap takes one layer off the front of a command: an assignment, a keyword, or a wrapper with
-// its own flags.
-func unwrap(w []string) []string {
-	if isAssignment(w[0]) || keywords[w[0]] {
-		return w[1:]
-	}
-	rest := w[1:]
-	// skipFlags drops flags, and the value of those named, which come before the command.
-	skipFlags := func(withValue ...string) []string {
-		for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
-			f := rest[0]
-			rest = rest[1:]
-			for _, v := range withValue {
-				if f == v && len(rest) > 0 {
-					rest = rest[1:]
+// forms are the ways a command's words are matched: as written, from each block it opens, and
+// with what runs it taken off.
+func forms(tool string, words []string) [][]string {
+	var out [][]string
+	seen := map[string]bool{}
+	var walk func(w []string)
+	walk = func(w []string) {
+		w = trimClosing(w)
+		key := strings.Join(w, string(rune(0)))
+		if len(w) == 0 || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, w)
+		// A block's commands start after the brace that opens it.
+		for i, x := range w {
+			if rest, ok := strings.CutPrefix(x, "{"); ok {
+				next := w[i+1:]
+				if rest != "" {
+					next = append([]string{rest}, next...)
 				}
+				walk(next)
 			}
 		}
-		return rest
+		first := strings.ToLower(w[0])
+		if tool == "PowerShell" {
+			if cmdlet, ok := aliases[first]; ok {
+				walk(append([]string{cmdlet}, w[1:]...))
+			}
+		}
+		switch {
+		case keywords[first] || isAssignment(w[0]):
+			walk(w[1:])
+		case wrappers[w[0]] && !(w[0] == "command" && len(w) > 1 && (w[1] == "-v" || w[1] == "-V")):
+			for i := 1; i < len(w); i++ {
+				walk(w[i:])
+			}
+		}
 	}
-	switch w[0] {
-	case "time", "nohup", "noglob", "builtin":
-		return skipFlags()
-	case "command":
-		if len(rest) > 0 && (rest[0] == "-v" || rest[0] == "-V") {
+	walk(words)
+	return out
+}
+
+// trimClosing takes off the braces that close blocks at the end of a command.
+func trimClosing(w []string) []string {
+	for len(w) > 0 {
+		last := strings.TrimRight(w[len(w)-1], "}")
+		if last == w[len(w)-1] {
 			return w
 		}
-		return skipFlags()
-	case "nice":
-		return skipFlags("-n")
-	case "stdbuf":
-		return skipFlags("-i", "-o", "-e")
-	case "timeout":
-		rest = skipFlags("-s", "-k")
-		if len(rest) > 0 {
-			return rest[1:]
-		}
-		return rest
-	case "xargs":
-		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-			return rest
+		w = w[:len(w)-1]
+		if last != "" {
+			return append(w[:len(w):len(w)], last)
 		}
 	}
 	return w

@@ -77,12 +77,16 @@ Newest first.
   the strictest of those and the policy winning. Allow rules cannot lift the policy, so they
   are not read. Managed policy from the registry, configuration profiles, MDM or the console,
   and `--settings`, cannot be read, and the install guide says so. A file that exists but
-  cannot be read denies. Matching follows Claude Code's documentation, with the daemon's shell
-  splitter and quotes taken off, so it reads more as a match, never on purpose less. A
+  cannot be read denies, and only a regular file is read, so a pipe cannot hold the hook.
+  Matching follows Claude Code's documentation and reads more as a match, never on purpose
+  less: the text as written and, through the daemon's shell splitter, each command with quotes
+  taken off, `{ }` blocks included; after a wrapper every word is tried, since its options
+  cannot be parsed for every form. A
   rewrite that would let Claude Code's own matcher see the original (`if false; then <text>;
   fi; ...`) was weighed and dropped: the text could close the `if` and run outside `run`. The
-  binary is the hook itself (#7), and a rewrite names its build (`--hook-version`), which `run`
-  checks. A missing binary fails closed through the install line's `|| exit 2`, since Claude
+  binary is the hook itself (#7), and a rewrite names its build (`--hook-build`), which `run`
+  checks. A build is a hash of the binary's own file: the toolchain's version string is the
+  same for local builds and for different changes at one commit. A missing binary fails closed through the install line's `|| exit 2`, since Claude
   Code runs a command whose hook fails with another code.
 - 2026-11-07: M6 split into the hook (M6a) and the user's rules with the binary's discovery
   (M6b), one issue and PR each. M6a (PR #58, #56): the hook is the binary's own subcommand, so

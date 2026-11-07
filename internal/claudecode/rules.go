@@ -179,7 +179,7 @@ func (r *Rules) add(path string, f *settingsFile) {
 
 // readSettings reads one settings file; a file that is not there is nil.
 func readSettings(path string) (*settingsFile, error) {
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|openNonBlock, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -187,6 +187,10 @@ func readSettings(path string) (*settingsFile, error) {
 		return nil, fmt.Errorf("read %s: %v", path, err)
 	}
 	defer file.Close()
+	// A pipe or a device could hold the hook forever; only a regular file is read.
+	if fi, err := file.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxSettingsSize+1))
 	switch {
 	case err != nil:

@@ -36,7 +36,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	slots := flags.Bool("slots", false, "wait for one of the daemon's heavy-command slots first")
 	socket := flags.String("socket", "", "the daemon's socket (default: the user's state directory); implies --slots")
 	maxWait := flags.Duration("max-wait", 0, "give up after waiting this long for a slot (0: no limit)")
-	hookVersion := flags.String("hook-version", "", "the build of the hook that wrote this command line; run refuses another build's")
+	hookBuild := flags.String("hook-build", "", "the build of the hook that wrote this command line; run refuses another build's")
 	memory := flags.String("memory", "", "a ceiling on the memory of the command and all it starts: bytes, or with K, M or G")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -55,9 +55,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case *maxWait > 0 && !*slots && *socket == "":
 		return usageFail(stderr, "--max-wait needs --slots")
 	}
-	if *hookVersion != "" && *hookVersion != version() {
-		fmt.Fprintf(stderr, "adanext-exec: the hook that wrote this command is adanext-exec %s, and this is %s; install one build for both\n", *hookVersion, version())
-		return ExitCannotRun
+	if *hookBuild != "" {
+		id, err := build()
+		switch {
+		case err != nil:
+			fmt.Fprintf(stderr, "adanext-exec: identify this build for the hook's command: %v\n", err)
+			return ExitCannotRun
+		case id != *hookBuild:
+			fmt.Fprintf(stderr, "adanext-exec: the hook that wrote this command is build %s, and this binary is build %s; install one build for both\n", *hookBuild, id)
+			return ExitCannotRun
+		}
 	}
 	memoryLimit, err := parseSize(*memory)
 	if err != nil {

@@ -88,11 +88,12 @@ func TestTheProjectIsWhereTheSessionStarted(t *testing.T) {
 // run refuses a rewrite written by another build of the hook, and says which.
 func TestRunRefusesARewriteFromAnotherBuild(t *testing.T) {
 	e := setup(t)
-	code, _, stderr := main(t, context.Background(), "", "touch", "run", "--hook-version", "v0.0.0+other", "--")
-	if code != ExitCannotRun || e.ran() || !strings.Contains(stderr, "v0.0.0+other") || !strings.Contains(stderr, version()) {
+	id := mustBuild(t)
+	code, _, stderr := main(t, context.Background(), "", "touch", "run", "--hook-build", "0123other", "--")
+	if code != ExitCannotRun || e.ran() || !strings.Contains(stderr, "0123other") || !strings.Contains(stderr, id) {
 		t.Errorf("another build: code %d, ran %v, stderr %q; want 126 naming both builds", code, e.ran(), stderr)
 	}
-	if code, _, stderr := main(t, context.Background(), "", "touch", "run", "--hook-version", version(), "--"); code != 0 || !e.ran() {
+	if code, _, stderr := main(t, context.Background(), "", "touch", "run", "--hook-build", id, "--"); code != 0 || !e.ran() {
 		t.Errorf("this build: code %d, stderr %q", code, stderr)
 	}
 }
@@ -109,8 +110,8 @@ func TestTheInstallLineFailsClosedWithoutTheBinary(t *testing.T) {
 	}
 	for _, shell := range shells {
 		code, _, stderr := main(t, context.Background(), "", "", "run", "--shell", shell, "--", "adanext-exec-not-installed hook claude-code || exit 2")
-		if code != 2 {
-			t.Errorf("%s, no binary: code %d, stderr %q; want 2", shell, code, stderr)
+		if code != 2 || !strings.Contains(stderr, "adanext-exec-not-installed") {
+			t.Errorf("%s, no binary: code %d, stderr %q; want 2 and the shell's message", shell, code, stderr)
 		}
 	}
 	line := bashQuote(filepath.ToSlash(exe)) + " hook claude-code || exit 2"
@@ -118,5 +119,37 @@ func TestTheInstallLineFailsClosedWithoutTheBinary(t *testing.T) {
 	code, stdout, stderr := main(t, context.Background(), in, "", "run", "--shell", "bash", "--", line)
 	if code != 0 || !strings.Contains(stdout, `"permissionDecision":"deny"`) {
 		t.Errorf("with the binary: code %d, stdout %q, stderr %q; want its deny", code, stdout, stderr)
+	}
+}
+
+func mustBuild(t *testing.T) string {
+	t.Helper()
+	id, err := build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// A build's identity is its file's content: one byte apart is another build, a copy the same.
+func TestABuildIsItsFilesContent(t *testing.T) {
+	dir := t.TempDir()
+	ids := map[string]string{}
+	for name, text := range map[string]string{"a": "binary one", "copy": "binary one", "b": "binary onf"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		id, err := fileID(path)
+		if err != nil || len(id) != 32 {
+			t.Fatalf("%s: %q %v", name, id, err)
+		}
+		ids[name] = id
+	}
+	if ids["a"] != ids["copy"] || ids["a"] == ids["b"] {
+		t.Errorf("ids %v: want a copy the same and a changed byte another", ids)
+	}
+	if _, err := fileID(filepath.Join(dir, "none")); err == nil {
+		t.Error("a missing file has an id")
 	}
 }

@@ -182,7 +182,11 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return deny("find the binary for the rewrite: " + err.Error())
 	}
-	argv := []string{"run", "--hook-version", version(), "--shell", string(shell)}
+	id, err := build()
+	if err != nil {
+		return deny("identify this build: " + err.Error())
+	}
+	argv := []string{"run", "--hook-build", id, "--shell", string(shell)}
 	if *policy != "" {
 		argv = append(argv, "--policy", *policy)
 	}

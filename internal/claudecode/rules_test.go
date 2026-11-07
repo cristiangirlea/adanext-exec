@@ -43,8 +43,10 @@ func TestBashRulesMatchAsClaudeCodeDoes(t *testing.T) {
 			[]string{"rm", "rm -rf x", "cd /tmp && rm -rf x", `echo "$(rm -rf x)"`, "echo `rm x`", "FOO=bar rm -rf tmp/",
 				"timeout 10 rm x", "timeout -s KILL 5s rm x", "nice -n 5 rm x", "nohup rm x", "time -p rm x", "stdbuf -o L rm x",
 				"command rm x", "builtin rm x", "xargs rm", "for f in a b; do rm $f; done", "if true; then rm x; fi",
+				"timeout --signal KILL 5 rm x", "timeout --kill-after=3 -s TERM 5 rm x", "time -o t.txt rm x", "xargs -n1 rm x",
 				"ls | rm x", "a || rm x", "a & rm x", "a\nrm x", "(rm x)", "{ rm x; }", "! rm x", "'rm' x"},
-			[]string{"rmdir x", "echo rm x", "lsof", "xargs -n1 rm x", "command -v rm", `git commit -m "rm x"`}},
+			[]string{"rmdir x", "echo rm x", "lsof", "command -v rm", `git commit -m "rm x"`}},
+		{`Bash(echo 'restricted')`, []string{`echo 'restricted'`, `ls && echo 'restricted'`}, []string{`echo restricted`}},
 		{"Bash(ls*)", []string{"ls", "lsof", "ls -la"}, []string{"cat ls"}},
 		{"Bash(ls:*)", []string{"ls", "ls -la"}, []string{"lsof"}},
 		{"Bash(npm run build)", []string{"npm run build", "x && npm run build"}, []string{"npm run build2", "npm run build --x"}},
@@ -74,7 +76,9 @@ func TestBashRulesMatchAsClaudeCodeDoes(t *testing.T) {
 // or a chain.
 func TestPowerShellRulesMatchAliasesAndIgnoreCase(t *testing.T) {
 	r := rulesOf(t, `{"permissions": {"ask": ["PowerShell(Remove-Item *)"], "deny": ["PowerShell(Invoke-Expression)"]}}`)
-	for _, cmd := range []string{"Remove-Item x", "remove-item -Recurse x", "rm x", "RI x", "del x", "Get-Date; ri x", "gci | Remove-Item", "a && rm x", "$(rm x)"} {
+	for _, cmd := range []string{"Remove-Item x", "remove-item -Recurse x", "rm x", "RI x", "del x", "Get-Date; ri x", "gci | Remove-Item", "a && rm x", "$(rm x)",
+		"if ($true) { Remove-Item x }", "if ($a) { Get-Date } else { rm x }", "foreach ($f in $l) { ri $f }", "1..3 | ForEach-Object {Remove-Item $_}",
+		"& { del x }", "try { Get-Date; Remove-Item x } catch { }", "while ($true) {rm x}"} {
 		if d, rule := r.Check("PowerShell", cmd); d != Ask || rule != "PowerShell(Remove-Item *)" {
 			t.Errorf("%q: %q %q, want ask", cmd, d, rule)
 		}
@@ -84,7 +88,7 @@ func TestPowerShellRulesMatchAliasesAndIgnoreCase(t *testing.T) {
 			t.Errorf("%q: %q, want no match", cmd, d)
 		}
 	}
-	if d, _ := r.Check("PowerShell", "iex"); d != Deny {
+	if d, _ := r.Check("PowerShell", "Get-Date; if ($x) { iex }"); d != Deny {
 		t.Errorf("iex: %q, want deny by its cmdlet", d)
 	}
 	if d, _ := r.Check("Bash", "rm x"); d != "" {

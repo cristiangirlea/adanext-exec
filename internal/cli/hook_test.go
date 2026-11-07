@@ -188,7 +188,7 @@ func TestTheRewriteCarriesThePolicyAndTheCaller(t *testing.T) {
 	if d == nil || json.Unmarshal(d.Input["command"], &rewrite) != nil {
 		t.Fatalf("answer %+v", d)
 	}
-	want := `'/bin/adanext-exec' 'run' '--hook-version' '` + version() + `' '--shell' 'bash' '--profile' 'ci' '--approved=say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
+	want := `'/bin/adanext-exec' 'run' '--hook-build' '` + mustBuild(t) + `' '--shell' 'bash' '--profile' 'ci' '--approved=say-hi' '--agent' 'claude-code' '--session' '5f1c-session' '--script-b64' 'c2F5LWhp'`
 	if rewrite != want {
 		t.Errorf("rewrite %s\nwant    %s", rewrite, want)
 	}

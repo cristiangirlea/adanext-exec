@@ -55,11 +55,14 @@ PowerShell 5.1.
    The project is the one the session started in (`CLAUDE_PROJECT_DIR`). A managed
    `allowManagedPermissionRulesOnly` leaves only the managed rules.
 
-   The rules match the original text, as Claude Code's documentation describes:
+   The rules match the original text, as Claude Code's documentation describes, and in places
+   more widely:
    - `*` and a trailing ` *` or `:*`;
-   - every command of a compound one, including in `$( )`, backticks and loops;
-   - past leading assignments, and past the wrappers `timeout`, `time`, `nice`, `nohup`,
-     `stdbuf`, `command`, `builtin`, `noglob` and a bare `xargs`;
+   - the text as written, whole and between separators, and every command of a compound one,
+     including in `$( )`, backticks, loops and `{ }` blocks (PowerShell's script blocks too);
+   - past leading assignments and shell keywords; after the wrappers `timeout`, `time`,
+     `nice`, `nohup`, `stdbuf`, `command`, `builtin`, `noglob` and `xargs`, a rule is tried at
+     every word, so their options cannot hide the command;
    - PowerShell's built-in aliases (`rm` is `Remove-Item`), with case ignored.
 
    A deny denies. An ask asks, unless the policy refuses. A settings file that exists but
@@ -67,12 +70,13 @@ PowerShell 5.1.
 2. **The policy.** refuse denies, ask asks (the rewrite then carries the approval), and allow
    allows. The strictest of your rules and the policy wins.
 3. **The rewrite.** The command becomes the binary itself running
-   `run --hook-version V --shell bash|pwsh|powershell --script-b64 TEXT`, which no shell
+   `run --hook-build V --shell bash|pwsh|powershell --script-b64 TEXT`, which no shell
    reparses. When you are asked, the reason shows the original command, since what you
    approve is the rewrite.
 4. **`run`** judges the command again and runs it with its limits. It refuses (exit 126)
    when it is not the build that wrote the rewrite, for example after an upgrade between the
-   two. Reinstall so that the hook and the binary are one build.
+   two. A build is a hash of the binary's own file, so any change to the binary counts.
+   Reinstall so that the hook and the binary are one build.
 
 ## What the hook cannot see
 
@@ -83,8 +87,9 @@ PowerShell 5.1.
 - **Allow rules.** Your allow rules do not lift the policy: a command the policy refuses or
   asks about stays refused or asked about. A command the policy allows runs without
   Claude Code's prompt, even when no allow rule covers it.
-- **Matching.** The hook takes quotes off before it matches, so `git 'push'` matches
-  `Bash(git push *)` here, which Claude Code itself would not match. Claude Code's
+- **Matching.** The hook also matches with quotes taken off, so `git 'push'` matches
+  `Bash(git push *)` here, which Claude Code itself would not match, and after a wrapper it
+  tries every word, so `timeout 5 echo rm` matches `Bash(rm *)`. Claude Code's
   "known-safe" assignment list for allow rules, which its documentation does not give, plays
   no part, since only deny and ask are applied.
 - **The shell.** Under the Bash tool on Linux and macOS, the text runs under `bash`,

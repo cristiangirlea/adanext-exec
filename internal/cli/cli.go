@@ -4,9 +4,12 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"runtime/debug"
+	"os"
+	"sync"
 )
 
 // The exit codes the binary itself gives, documented in docs/protocol.md. Any other code is the
@@ -86,27 +89,28 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	return ExitUsage
 }
 
-// version is this binary's build, as the Go toolchain recorded it: the module's version, and
-// the commit it was built from. A hook's rewrite carries it, so run refuses a rewrite written by
-// another build.
-func version() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
+// build is this binary's identity: a hash of its own file, so no two builds share one. A
+// hook's rewrite carries it, and run refuses a rewrite written by another build.
+var build = sync.OnceValues(func() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("find this binary: %v", err)
 	}
-	v := bi.Main.Version
-	for _, s := range bi.Settings {
-		switch {
-		case s.Key == "vcs.revision":
-			v += "+" + s.Value
-		case s.Key == "vcs.modified" && s.Value == "true":
-			v += "-modified"
-		}
+	return fileID(exe)
+})
+
+// fileID is the first 128 bits of a file's SHA-256, in hex.
+func fileID(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read this binary: %v", err)
 	}
-	if v == "" {
-		return "unknown"
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("read this binary: %v", err)
 	}
-	return v
+	return hex.EncodeToString(h.Sum(nil)[:16]), nil
 }
 
 // isElevated reports whether the binary runs as root or an elevated administrator; tests replace it.
