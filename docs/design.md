@@ -22,8 +22,9 @@ macOS, with one policy, one set of limits and one audit log.
 
 ## What it is
 
-1. **A Go SDK** (`github.com/cristiangirlea/adanext-exec/broker`): Go programs (hrn, `adad`)
-   import it and run commands through it directly. Standard library only.
+1. **A Go SDK** (`github.com/cristiangirlea/adanext-exec/broker`): Go programs can import it and
+   run commands through it directly. Standard library only. hrn and `adad` do not: they call the
+   binary, so the gate enforces from its own process (M7, M8).
 2. **A binary, `adanext-exec`**, that is three things:
    - `adanext-exec run [--profile P] [--approved RULE] -- <command…>`: run one command under the
      broker and exit with its code. Usable from any shell, hook or language. `--approved RULE`
@@ -467,10 +468,13 @@ or a sandbox, outside this project's first scope.
    refused (where no person can be asked, ask means refuse). This rests on the same-user trust
    below: `run` cannot tell who wrote `--approved`, and does not need to, since the flag only
    confirms an ask the policy itself gives.
-2. **hrn**: `internal/tools` runs shell commands through the SDK when it is present, and its
-   guard rules move here, with harness keeping a thin adapter.
-3. **AdaNext OS**: `adad` runs every task command through the SDK; the policy and limits become
-   per-project profiles.
+2. **hrn**: `internal/tools` runs shell commands through `adanext-exec run` when the gate is on,
+   with a version handshake, and its guard rules move here, with harness keeping a thin adapter.
+   harness never imports this module, and stays standard library only.
+3. **AdaNext OS**: `adad` runs every task command through `adanext-exec run`, each in a cgroup
+   of its own where it holds a delegated one, so the kernel holds the ceiling; the policy and
+   limits become per-project profiles. A small dependency-free client package for this comes
+   with M8.
 4. **Codex and others**: through `adanext-exec run` as their shell, where they allow one.
 
 ## Milestones
@@ -484,8 +488,8 @@ or a sandbox, outside this project's first scope.
 | M4 | The daemon and heavy-command slots | Two clients' builds queue instead of running together |
 | M5 | Memory ceilings | A command over its ceiling is stopped and reported, or reported as not enforced where the platform cannot, per platform |
 | M6 | Claude Code integration (hook, docs) | The owner's sessions run through it |
-| M7 | hrn integration | harness's tools use the SDK |
-| M8 | AdaNext OS integration | `adad` runs tasks through it |
+| M7 | hrn integration | harness's tools run through `adanext-exec run` |
+| M8 | AdaNext OS integration | `adad` runs tasks through `adanext-exec run` |
 
 ## Not in scope (for now)
 

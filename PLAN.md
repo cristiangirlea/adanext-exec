@@ -65,13 +65,28 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   - [x] **M6b: the user's rules and the binary** (#57, #6, #7). The user's permission rules
     applied to the original text, the hook's version carried to `run`, and installing
     (`docs/claude-code.md`). Done: PR #59, 2026-11-07.
-- [ ] **M7: hrn.** harness's tools run shell commands through the SDK.
-- [ ] **M8: AdaNext OS.** `adad` runs task commands through the SDK.
+- [ ] **M7: hrn.** harness's tools run shell commands through the `adanext-exec run` binary;
+  harness never imports this module (harness#435, its slices in harness; slice 1 is
+  harness#872).
+- [ ] **M8: AdaNext OS.** `adad` runs each task command through the `adanext-exec run` binary
+  (`--slots` for the daemon's slots), each in a cgroup of its own where adad holds a delegated
+  one; a small client package for that comes when M8 starts.
 
 ## Decisions log
 
 Newest first.
 
+- 2026-11-07: M7 and M8 run commands through the `adanext-exec run` binary, never through an
+  import of this module (the owner's choice). The gate enforces from its own process: a library
+  inside hrn or adad would run in the process it restricts, which could skip it, and would tie
+  their releases to this one. `run` is a supervisor per command, and `serve` keeps only what is
+  shared, the heavy-command slots: a socket that runs commands would carry the caller's
+  environment, directory and identity across, and be the most dangerous part to get wrong.
+  harness stays standard library only (slice 1 of harness#435 is harness#872). adad starts each
+  `run` straight into a cgroup of its own where it holds a delegated one, so the kernel holds
+  the ceiling (M5c); a dependency-free client package for that comes when M8 starts, in this
+  repository, in a folder of its own. No new repository. This settles the open "require"
+  question of harness's design note for both.
 - 2026-11-07: M5c (PR #60, #52), which completes M5. The owner chose the kernel's cgroup files
   with no dependency ("Kernel cgroup, no deps": no systemd-run, no D-Bus, no library) and a
   setting with three modes, `auto` (the default), `cgroup` and `watchdog`, given by `run
