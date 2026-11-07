@@ -111,7 +111,7 @@ func setUpCgroup() (string, error) {
 		if !made {
 			return err
 		}
-		if rm := os.Remove(leaf); rm != nil {
+		if rm := removeCgroupTree(leaf); rm != nil {
 			return errors.Join(err, fmt.Errorf("%w: %s stays: %v", errNotPutBack, leaf, rm))
 		}
 		return err

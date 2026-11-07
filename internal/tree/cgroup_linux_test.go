@@ -209,6 +209,32 @@ func TestAStepThatCannotBeUndoneRunsNothing(t *testing.T) {
 	}
 }
 
+// The leaf the setup made goes when the move into it fails, and a leaf that cannot go is said;
+// a leaf the setup found is left alone.
+func TestALeafIsRolledBackOnlyWhenTheSetupMadeIt(t *testing.T) {
+	_, app := fakeCgroups(t, true, nil)
+	oldRemove := removeCgroupTree
+	removeCgroupTree = func(string) error { return syscall.EBUSY }
+	t.Cleanup(func() { removeCgroupTree = oldRemove })
+	// The leaf is made here, and has no cgroup.procs, so the move fails; its removal fails too.
+	if _, err := cgroupBase(); !errors.Is(err, errNotPutBack) || !strings.Contains(err.Error(), "move this process") {
+		t.Errorf("cgroupBase() = %v; want the move's failure and the leaf that stays", err)
+	}
+
+	_, app = fakeCgroups(t, true, nil)
+	removed := false
+	removeCgroupTree = func(string) error { removed = true; return nil }
+	if err := os.Mkdir(filepath.Join(app, brokerLeaf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cgroupBase(); err == nil || errors.Is(err, errNotPutBack) {
+		t.Errorf("cgroupBase() = %v; want the move's failure alone", err)
+	}
+	if removed {
+		t.Error("a leaf the setup found was removed")
+	}
+}
+
 // A cgroup that cannot be removed is said, not dropped.
 func TestARemovalThatFailsIsSaid(t *testing.T) {
 	old := cgroupRemoveWait
@@ -460,6 +486,17 @@ func TestATreeThatLeavesItsCgroupIsStopped(t *testing.T) {
 	}
 }
 
+// A command that cannot start leaves no cgroup behind; one that stays is said, and runs nothing.
+func TestAFailedStartRemovesItsCgroup(t *testing.T) {
+	dir := testCgroup(t)
+	got := runIn(t, dir, "cgroup-badstart")
+	for k, want := range map[string]string{"clean": "true", "cleanleft": "0", "stays": "true", "staysleft": "0"} {
+		if got[k] != want {
+			t.Errorf("%s = %q; want %q (all: %v)", k, got[k], want, got)
+		}
+	}
+}
+
 // A cgroup shared with another process cannot be divided: CeilingCgroup starts nothing, auto
 // watches, and the cgroup is left as it was.
 func TestASharedCgroupIsLeftAlone(t *testing.T) {
@@ -567,6 +604,30 @@ func helperCgroup(mode string) {
 			os.Exit(2)
 		}
 		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "cgroup-badstart":
+		// cmds counts the command cgroups in the helper's own cgroup's parent: what is left.
+		cmds := func() int {
+			base, _ := cgroupBase()
+			entries, _ := os.ReadDir(base)
+			n := 0
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), cmdPrefix) {
+					n++
+				}
+			}
+			return n
+		}
+		bad := func() *exec.Cmd { return exec.Command(filepath.Join(os.TempDir(), "adanext-exec-no-such-program")) }
+		_, err := StartCeiling(bad(), 64<<20, CeilingAuto)
+		report("clean", err != nil && !errors.Is(err, errNotPutBack))
+		report("cleanleft", cmds())
+		// The removal fails (after removing, so nothing stays for real): said, nothing run.
+		cgroupRemoveWait = 20 * time.Millisecond
+		removeCgroupTree = func(dir string) error { _ = removeTree(dir); return syscall.EBUSY }
+		_, err = StartCeiling(bad(), 64<<20, CeilingAuto)
+		report("stays", errors.Is(err, errNotPutBack) && errors.Is(err, fs.ErrNotExist))
+		report("staysleft", cmds())
 		os.Exit(0)
 	case "cgroup-shared":
 		cmd := helperCmd("exit")
