@@ -80,7 +80,9 @@ Newest first.
   caller, and `run` and `serve` need no separate rule. The caller's cgroup must hold the caller
   alone: it moves into a leaf of its own and gives each command a cgroup beside it, started
   straight into it with clone3, which is tried once first since a failed start cannot be
-  retried. The watch keeps running beside the cgroup, for a process that leaves it. CI hands
+  retried. The watch keeps running beside the cgroup and stops the tree when a process leaves
+  it, since the same user can always move a process out of a delegated cgroup; the review
+  asked for that, and for cleanup that never removes a cgroup the broker did not make. CI hands
   the Linux runner a delegated cgroup through sudo, as systemd would; the tests run
   unelevated.
 - 2026-11-07: M6b (PR #59, #57). Claude Code gives a hook no merged view of its rules, so the

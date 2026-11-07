@@ -28,6 +28,9 @@ func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error
 	return nil, ErrUnsupported
 }
 
+// RemoveCgroup is never reached on this platform.
+func (t *Tree) RemoveCgroup() error { return nil }
+
 // MemoryHard is never reached on this platform.
 func (t *Tree) MemoryHard() bool { return false }
 

@@ -218,16 +218,23 @@ Per command:
       that cannot exist, so only its exec can fail). Then the caller moves itself into a leaf of
       its own, `adanext-exec-broker`, since a cgroup holding processes cannot hand controllers
       to its children, and turns the memory controller on for them. A step that fails puts back
-      what the earlier ones changed; empty cgroups an earlier broker left are removed.
+      what the earlier ones changed, and says so when it cannot. A cgroup the broker did not make
+      is never removed, whatever its name; what a broker that crashed left goes when systemd
+      stops the unit.
     - Each command then gets a cgroup of its own, `adanext-exec-cmd-<random>`, beside that leaf:
       `memory.max` is the ceiling, `memory.swap.max` 0 where swap is accounted, and
       `memory.oom.group` 1, so the kernel's out-of-memory killer stops the whole cgroup at
       once. The command is started straight into it, so nothing it starts is ever outside it,
       and the kill writes `cgroup.kill` (Linux 5.14) before the tree's own kill. An `oom_kill`
       in `memory.events` marks the command over its ceiling (122), and `memory.peak` (Linux
-      5.19) is its peak. The cgroup is removed when the command is done.
-    - The watch runs as well: a process that moves itself out of the command's cgroup (it may,
-      into the broker's leaf, as the same user) is still counted and killed with the tree.
+      5.19) is its peak. The cgroup is removed once the command is reaped; one that cannot be
+      is reported (exit 120).
+    - The watch runs as well, and also reads where each process of the tree is. The same user
+      may move a process out of the command's cgroup (into the broker's leaf), where the kernel
+      no longer holds the ceiling for it: the watch then stops the tree within one read, and the
+      result carries the error (exit 120). So hard means held by the kernel for as long as the
+      tree stays in its cgroup, which a command can leave only on purpose; a Job Object on
+      Windows cannot be left at all.
     - Which hosts get it: a caller started in a cgroup delegated to its user and holding it
       alone, as a systemd unit with `Delegate=yes` is (a user service, or `systemd-run --user
       --scope -p Delegate=yes adanext-exec run ...`). The serve daemon only hands out slots, so

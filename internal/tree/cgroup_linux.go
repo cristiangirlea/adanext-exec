@@ -110,12 +110,14 @@ func setUpCgroup() (string, error) {
 		return "", fmt.Errorf("move this process into %s: %w", leaf, err)
 	}
 	if err := writeCgroupFile(filepath.Join(dir, "cgroup.subtree_control"), "+memory"); err != nil {
-		// Back to where it was, and the leaf gone.
-		_ = writeCgroupFile(filepath.Join(dir, "cgroup.procs"), me)
+		err = fmt.Errorf("turn on the memory controller in %s: %w", dir, err)
+		// Back to where it was, and the leaf gone; a step back that fails is said too.
+		if back := writeCgroupFile(filepath.Join(dir, "cgroup.procs"), me); back != nil {
+			return "", errors.Join(err, fmt.Errorf("this process stays in %s: %w", leaf, back))
+		}
 		_ = os.Remove(leaf)
-		return "", fmt.Errorf("turn on the memory controller in %s: %w", dir, err)
+		return "", err
 	}
-	removeStale(dir)
 	return dir, nil
 }
 
@@ -172,20 +174,6 @@ func forkIntoCgroup(dir string) error {
 		return errors.New("a program that cannot exist was started")
 	}
 	return err
-}
-
-// removeStale removes the empty cgroups an earlier broker left in dir. A cgroup that still holds
-// a process cannot be removed, so nothing in use goes.
-func removeStale(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), cmdPrefix) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
-		}
-	}
 }
 
 // cgroup is one command's cgroup.
@@ -262,17 +250,44 @@ func (g *cgroup) final() (exceeded bool, peak uint64, err error) {
 	return exceeded, peak, nil
 }
 
-// remove removes the cgroup and any its command made under it, once their processes are gone;
-// it waits up to two seconds for them to finish dying.
-func (g *cgroup) remove() {
+// cgroupRemoveWait is how long remove waits for the cgroup's processes to finish dying; tests
+// shorten it.
+var cgroupRemoveWait = 2 * time.Second
+
+// remove removes the cgroup and any its command made under it, once their processes are gone,
+// and says why when it could not. A cgroup already gone is not an error.
+func (g *cgroup) remove() error {
 	g.closeFD()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(cgroupRemoveWait)
 	for {
-		if removeTree(g.dir) == nil || time.Now().After(deadline) {
-			return
+		err := removeTree(g.dir)
+		if err == nil || time.Now().After(deadline) {
+			return err
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// procCgroupFile names where a process's cgroup is read; tests replace it.
+var procCgroupFile = func(pid int) string { return fmt.Sprintf("/proc/%d/cgroup", pid) }
+
+// outside reads where a process is, and returns its cgroup when that is neither the command's
+// cgroup nor one under it: the process left, and the kernel no longer holds the ceiling for it.
+func (g *cgroup) outside(pid int) (string, error) {
+	data, err := os.ReadFile(procCgroupFile(pid))
+	if err != nil {
+		return "", err
+	}
+	own := strings.TrimPrefix(g.dir, cgroupRoot)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if path, ok := strings.CutPrefix(line, "0::"); ok {
+			if path == own || strings.HasPrefix(path, own+"/") {
+				return "", nil
+			}
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("no cgroup v2 path for process %d", pid)
 }
 
 // removeTree removes a cgroup's children, deepest first, then the cgroup.
@@ -346,9 +361,10 @@ func hasWord(list []byte, word string) bool {
 
 // StartCeiling is StartLimited with a choice of how the ceiling is held. With a ceiling and
 // CeilingAuto or CeilingCgroup, the command is started straight into a cgroup of its own with
-// memory.max set, so the kernel holds the ceiling; the watch runs as well, for a process that
-// moves itself out of the cgroup. Where no such cgroup can be made, CeilingAuto watches the
-// ceiling only, and CeilingCgroup does not start the command (ErrNoHardCeiling).
+// memory.max set, so the kernel holds the ceiling. The watch runs as well: a process of the
+// tree found outside that cgroup (the same user may move it out) stops the tree, with the
+// error. Where no such cgroup can be made, CeilingAuto watches the ceiling only, and
+// CeilingCgroup does not start the command (ErrNoHardCeiling).
 func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error) {
 	if memoryLimit == 0 || mode == CeilingWatch {
 		return StartLimited(cmd, memoryLimit)
@@ -365,12 +381,11 @@ func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error
 	}
 	cmd.SysProcAttr.UseCgroupFD = true
 	cmd.SysProcAttr.CgroupFD = g.fd
-	t, err := StartLimited(cmd, memoryLimit)
+	t, err := startWatched(cmd, memoryLimit, g)
 	g.closeFD()
 	if err != nil {
-		g.remove()
+		_ = g.remove()
 		return nil, err
 	}
-	t.cg = g
 	return t, nil
 }

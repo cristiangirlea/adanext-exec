@@ -158,6 +158,64 @@ func TestTheSetupPutsBackWhatItChanged(t *testing.T) {
 	if got := readTest(t, filepath.Join(app, "cgroup.procs")); got != strconv.Itoa(os.Getpid()) {
 		t.Errorf("cgroup.procs = %q; want this process moved back", got)
 	}
+
+	// A move back that fails is said, with where the process stays.
+	_, app = fakeCgroups(t, true, nil)
+	writeTest(filepath.Join(app, brokerLeaf, "cgroup.procs"), "")
+	if err := os.Remove(filepath.Join(app, "cgroup.subtree_control")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(app, "cgroup.procs"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file: the failed move back is not tried")
+	}
+	_, err := cgroupBase()
+	if err == nil || !strings.Contains(err.Error(), "turn on the memory controller") || !strings.Contains(err.Error(), "stays in "+filepath.Join(app, brokerLeaf)) {
+		t.Errorf("cgroupBase() = %v; want the controller's failure and where the process stays", err)
+	}
+}
+
+// A cgroup that cannot be removed is said, not dropped.
+func TestARemovalThatFailsIsSaid(t *testing.T) {
+	old := cgroupRemoveWait
+	cgroupRemoveWait = 50 * time.Millisecond
+	t.Cleanup(func() { cgroupRemoveWait = old })
+	// A directory holding a file stands in for a cgroup that still holds a process.
+	dir := t.TempDir()
+	writeTest(filepath.Join(dir, "cg", "busy"), "")
+	g := &cgroup{dir: filepath.Join(dir, "cg"), fd: -1}
+	if err := g.remove(); err == nil {
+		t.Error("remove() = nil; want why the cgroup stays")
+	}
+	gone := &cgroup{dir: filepath.Join(dir, "gone"), fd: -1}
+	if err := gone.remove(); err != nil {
+		t.Errorf("remove() of a cgroup already gone = %v; want nil", err)
+	}
+}
+
+// A process is the command's while it is in the command's cgroup or one under it.
+func TestOutsideTellsWhereAProcessIs(t *testing.T) {
+	files := t.TempDir()
+	old := procCgroupFile
+	procCgroupFile = func(pid int) string { return filepath.Join(files, strconv.Itoa(pid)) }
+	t.Cleanup(func() { procCgroupFile = old })
+	g := &cgroup{dir: filepath.Join(cgroupRoot, "app", cmdPrefix+"1"), fd: -1}
+	for pid, tc := range map[int]struct{ data, want string }{
+		1: {"0::/app/" + cmdPrefix + "1\n", ""},
+		2: {"0::/app/" + cmdPrefix + "1/sub\n", ""},
+		3: {"0::/app/" + brokerLeaf + "\n", "/app/" + brokerLeaf},
+		4: {"0::/app/" + cmdPrefix + "10\n", "/app/" + cmdPrefix + "10"},
+	} {
+		writeTest(filepath.Join(files, strconv.Itoa(pid)), tc.data)
+		if got, err := g.outside(pid); err != nil || got != tc.want {
+			t.Errorf("outside(%q) = %q, %v; want %q", tc.data, got, err, tc.want)
+		}
+	}
+	if _, err := g.outside(99); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("outside of a process gone = %v; want not exist", err)
+	}
 }
 
 // A usable cgroup: the process moves into the leaf, the memory controller is turned on for the
@@ -165,8 +223,8 @@ func TestTheSetupPutsBackWhatItChanged(t *testing.T) {
 func TestTheSetupMovesIntoALeafAndTurnsOnMemory(t *testing.T) {
 	_, app := fakeCgroups(t, true, nil)
 	writeTest(filepath.Join(app, brokerLeaf, "cgroup.procs"), "")
-	stale := filepath.Join(app, cmdPrefix+"old")
-	if err := os.Mkdir(stale, 0o755); err != nil {
+	other := filepath.Join(app, cmdPrefix+"old")
+	if err := os.Mkdir(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	probes := 0
@@ -186,8 +244,9 @@ func TestTheSetupMovesIntoALeafAndTurnsOnMemory(t *testing.T) {
 	if got := readTest(t, filepath.Join(app, "cgroup.subtree_control")); got != "+memory" {
 		t.Errorf("subtree_control = %q; want +memory", got)
 	}
-	if _, err := os.Stat(stale); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("the stale cgroup is still there: %v", err)
+	// A cgroup the setup did not make is never removed, whatever its name.
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("a cgroup the setup did not make was removed: %v", err)
 	}
 }
 
@@ -353,6 +412,18 @@ func TestCgroupLetsATreeUnderItsCeilingRun(t *testing.T) {
 	}
 }
 
+// A process that moves itself out of the command's cgroup (the same user may) is no longer held
+// by the kernel: the watch finds it and stops the tree, with the error.
+func TestATreeThatLeavesItsCgroupIsStopped(t *testing.T) {
+	dir := testCgroup(t)
+	got := runIn(t, dir, "cgroup-escape")
+	for k, want := range map[string]string{"stopped": "true", "left": "true", "killed": "true", "gone": "true"} {
+		if got[k] != want {
+			t.Errorf("%s = %q; want %q (all: %v)", k, got[k], want, got)
+		}
+	}
+}
+
 // A cgroup shared with another process cannot be divided: CeilingCgroup starts nothing, auto
 // watches, and the cgroup is left as it was.
 func TestASharedCgroupIsLeftAlone(t *testing.T) {
@@ -418,6 +489,45 @@ func helperCgroup(mode string) {
 		report("killed", strings.Contains(cmd.ProcessState.String(), "killed"))
 		report("gone", errors.Is(statErr, fs.ErrNotExist))
 		report("leaf", strings.HasSuffix(strings.TrimSpace(string(own)), "/"+brokerLeaf))
+		os.Exit(0)
+	case "cgroup-escape":
+		cmd := helperCmd("leave")
+		tr, err := StartCeiling(cmd, 256<<20, CeilingCgroup)
+		if err != nil {
+			report("start", err)
+			os.Exit(3)
+		}
+		dir := tr.cg.dir
+		exited := make(chan error, 1)
+		go func() { exited <- tr.WaitExit() }()
+		select {
+		case <-exited:
+			report("stopped", true)
+		case <-time.After(15 * time.Second):
+			report("stopped", false)
+		}
+		_ = tr.Kill()
+		_, _, err = tr.FinalMemory()
+		_ = cmd.Wait()
+		rmErr := tr.RemoveCgroup()
+		tr.Close()
+		_, statErr := os.Stat(dir)
+		report("left", err != nil && strings.Contains(err.Error(), "left the command's cgroup"))
+		report("err", err)
+		report("killed", strings.Contains(cmd.ProcessState.String(), "killed"))
+		report("gone", rmErr == nil && errors.Is(statErr, fs.ErrNotExist))
+		os.Exit(0)
+	case "leave":
+		// Moves itself out of its cgroup into the broker's leaf beside it, then stays.
+		own, err := ownCgroup()
+		if err != nil {
+			os.Exit(2)
+		}
+		leaf := filepath.Join(cgroupRoot, filepath.Dir(own), brokerLeaf, "cgroup.procs")
+		if writeCgroupFile(leaf, strconv.Itoa(os.Getpid())) != nil {
+			os.Exit(2)
+		}
+		time.Sleep(time.Minute)
 		os.Exit(0)
 	case "cgroup-shared":
 		cmd := helperCmd("exit")

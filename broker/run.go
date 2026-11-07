@@ -39,7 +39,8 @@ type Result struct {
 	// without it.
 	MemoryEnforced bool
 	// MemoryHard is true when the kernel held Command.MemoryLimit: a cgroup of the command's own
-	// on Linux, the Job Object on Windows. False with MemoryEnforced true means the ceiling was
+	// on Linux, the Job Object on Windows. A process that leaves that cgroup on Linux stops the
+	// tree, and Run returns the error. False with MemoryEnforced true means the ceiling was
 	// watched (Linux and macOS), so a spike shorter than one read could pass.
 	MemoryHard bool
 	// MemoryExceeded is true when the command's tree went over Command.MemoryLimit and was
@@ -291,6 +292,9 @@ func run(ctx context.Context, c Command) (res Result, ran bool, _ error) {
 		errs = append(errs, fmt.Errorf("watch the memory ceiling: %w", memErr))
 	}
 	err = cmd.Wait()
+	if err := t.RemoveCgroup(); err != nil {
+		errs = append(errs, fmt.Errorf("remove the command's cgroup: %w", err))
+	}
 	in.close()
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {

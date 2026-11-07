@@ -24,10 +24,17 @@ var probeRSS = residentBytes
 // says so: a spike shorter than one read can pass. Where the platform's memory cannot be read
 // here, the ceiling is not enforced, and MemoryEnforced says so.
 func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) {
+	return startWatched(cmd, memoryLimit, nil)
+}
+
+// startWatched is StartLimited for a command started in the cgroup cg (nil for none), which the
+// tree holds before its watch starts.
+func startWatched(cmd *exec.Cmd, memoryLimit uint64, cg *cgroup) (*Tree, error) {
 	t, err := Start(cmd)
 	if err != nil {
 		return nil, err
 	}
+	t.cg = cg
 	t.limit = memoryLimit
 	t.readRSS = residentBytes
 	t.readMark = func(pid int) (bool, error) { return envHas(pid, t.marker) }
@@ -125,11 +132,19 @@ func (t *Tree) treeMemory(marks map[pidStart]bool) (uint64, error) {
 		p   proc
 		rss uint64
 		err error
+		// Where the process is, when the kernel holds the ceiling and it is outside the
+		// command's cgroup, or why that could not be read.
+		outside string
+		cgErr   error
 	}
 	var samples []sample
 	for _, p := range t.members(procs, byGroup, marked) {
-		rss, err := read(p.pid)
-		samples = append(samples, sample{p, rss, err})
+		s := sample{p: p}
+		s.rss, s.err = read(p.pid)
+		if t.cg != nil {
+			s.outside, s.cgErr = t.cg.outside(p.pid)
+		}
+		samples = append(samples, s)
 	}
 	for key := range marks {
 		if !seen[key] {
@@ -156,6 +171,13 @@ func (t *Tree) treeMemory(marks map[pidStart]bool) (uint64, error) {
 				continue
 			}
 			return 0, fmt.Errorf("read the memory of process %d: %w", s.p.pid, s.err)
+		}
+		if s.cgErr != nil && !procEnded(s.cgErr) {
+			return 0, fmt.Errorf("read the cgroup of process %d: %w", s.p.pid, s.cgErr)
+		}
+		if s.outside != "" {
+			// The kernel no longer holds the ceiling for it: stop the tree, never call it hard.
+			return 0, fmt.Errorf("process %d left the command's cgroup for %s", s.p.pid, s.outside)
 		}
 		total += s.rss
 	}

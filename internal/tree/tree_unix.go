@@ -277,12 +277,21 @@ func (t *Tree) members(procs []proc, byGroup bool, marked func(int) bool) []proc
 	return found
 }
 
-// Close lets the thread that started the command go, and removes the command's cgroup.
+// RemoveCgroup removes the command's cgroup (StartCeiling, Linux) once the command has been
+// reaped, and says why when it could not; a tree with none, or one already removed, is not an
+// error.
+func (t *Tree) RemoveCgroup() error {
+	if t.cg == nil {
+		return nil
+	}
+	return t.cg.remove()
+}
+
+// Close lets the thread that started the command go, and removes the command's cgroup if
+// RemoveCgroup did not.
 func (t *Tree) Close() {
 	t.stopWatching()
-	if t.cg != nil {
-		t.cg.remove()
-	}
+	_ = t.RemoveCgroup()
 	t.release()
 }
 

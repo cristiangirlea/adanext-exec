@@ -12,7 +12,8 @@ type cgroup struct{}
 
 func (*cgroup) kill() error                  { return nil }
 func (*cgroup) final() (bool, uint64, error) { return false, 0, nil }
-func (*cgroup) remove()                      {}
+func (*cgroup) remove() error                { return nil }
+func (*cgroup) outside(int) (string, error)  { return "", nil }
 
 // StartCeiling is StartLimited: macOS has no hard ceiling, so CeilingCgroup does not start the
 // command (ErrNoHardCeiling), and the other modes watch the ceiling.
