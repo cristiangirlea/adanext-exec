@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,7 +43,7 @@ func TestBashRulesMatchAsClaudeCodeDoes(t *testing.T) {
 		{"Bash(rm *)",
 			[]string{"rm", "rm -rf x", "cd /tmp && rm -rf x", `echo "$(rm -rf x)"`, "echo `rm x`", "FOO=bar rm -rf tmp/",
 				"timeout 10 rm x", "timeout -s KILL 5s rm x", "nice -n 5 rm x", "nohup rm x", "time -p rm x", "stdbuf -o L rm x",
-				"command rm x", "builtin rm x", "xargs rm", "for f in a b; do rm $f; done", "if true; then rm x; fi",
+				"command rm x", "builtin rm x", "echo $(rm x", "echo \"$(rm x)\" done", "xargs rm", "for f in a b; do rm $f; done", "if true; then rm x; fi",
 				"timeout --signal KILL 5 rm x", "timeout --kill-after=3 -s TERM 5 rm x", "time -o t.txt rm x", "xargs -n1 rm x",
 				"ls | rm x", "a || rm x", "a & rm x", "a\nrm x", "(rm x)", "{ rm x; }", "! rm x", "'rm' x"},
 			[]string{"rmdir x", "echo rm x", "lsof", "command -v rm", `git commit -m "rm x"`}},
@@ -235,3 +236,52 @@ func TestDefaultSources(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + s + `"` }
+
+// Rules with quotes or braces in them match the text as written, also inside a compound
+// command, after a wrapper and in a block; an exact rule matches a block's command alone.
+func TestRulesMatchTheTextAsWritten(t *testing.T) {
+	for _, tc := range []struct {
+		tool, rule string
+		match      []string
+		nomatch    []string
+	}{
+		{"Bash", `Bash(echo 'a;b')`, []string{`echo 'a;b'`, `true && echo 'a;b'`, `timeout 5 echo 'a;b'`, `{ echo 'a;b'; }`}, []string{`echo 'a;c'`}},
+		{"Bash", `Bash(echo 'restricted')`, []string{`timeout 5 echo 'restricted'`, `FOO=1 echo 'restricted'`}, []string{`echo restricted`}},
+		{"Bash", `Bash(echo x})`, []string{`echo 'x}'`, `echo x}`, `ls; echo "x}"`}, nil},
+		{"Bash", `Bash(rm x)`, []string{`if true; then rm x; fi`, `{ rm x; }`, `f() { rm x; }`}, []string{`rm x y`}},
+		{"PowerShell", `PowerShell(Remove-Item x)`, []string{`if ($true) { ri x } else { Get-Date }`, `1..2 | % { del x }`, `try { rm x } finally { }`}, []string{`ri x y`}},
+		{"PowerShell", `PowerShell(Write-Output 'a;b')`, []string{`Get-Date; Write-Output 'a;b'`, `if ($x) { echo 'a;b' }`}, nil},
+	} {
+		r := rulesOf(t, `{"permissions": {"deny": [`+quoteJSON(tc.rule)+`]}}`)
+		for _, cmd := range tc.match {
+			if d, _ := r.Check(tc.tool, cmd); d != Deny {
+				t.Errorf("%s on %q: %q, want deny", tc.rule, cmd, d)
+			}
+		}
+		for _, cmd := range tc.nomatch {
+			if d, _ := r.Check(tc.tool, cmd); d != "" {
+				t.Errorf("%s on %q: %q, want no match", tc.rule, cmd, d)
+			}
+		}
+	}
+}
+
+// The splitter keeps each command's text as written and cuts only outside quotes.
+func TestSplitKeepsTheTextAsWritten(t *testing.T) {
+	cmds := split(false, `a 'b;c' && d "e $(f g) h" | i`)
+	var spans []string
+	for _, c := range cmds {
+		spans = append(spans, c.span)
+	}
+	if got, want := strings.Join(spans, "|"), `a 'b;c'|f g|d "e  h"|i`; got != want {
+		t.Errorf("spans %q, want %q", got, want)
+	}
+	if got := join(cmds[0].tokens, false); got != "a b;c" {
+		t.Errorf("text %q", got)
+	}
+}
+
+func quoteJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

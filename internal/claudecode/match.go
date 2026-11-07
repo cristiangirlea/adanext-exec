@@ -3,8 +3,6 @@ package claudecode
 import (
 	"regexp"
 	"strings"
-
-	"github.com/cristiangirlea/adanext-exec/internal/daemon"
 )
 
 // rule is one Bash or PowerShell permission rule: Tool or Tool(pattern).
@@ -56,31 +54,23 @@ func parseRule(text string) (rule, bool) {
 	return r, true
 }
 
-// matches reports whether the rule matches the command or any command within it: the text as
-// written, whole and between separators; and each command of a compound one, of a group, a
-// block, a substitution or a loop's body, with quotes taken off, as written and with what runs
-// it taken off (leading assignments, shell keywords, and wrappers). PowerShell's aliases count
-// as the cmdlets they name. It reads more text as a match than Claude Code does, never on
+// matches reports whether the rule matches the command or any command within it. Each command
+// of a compound one, of a substitution, a group, a loop's body or a block, is tried as written
+// and with quotes taken off, and so are the forms with what runs it taken off (leading
+// assignments, shell keywords, wrappers) and, in PowerShell, with an alias read as its cmdlet.
+// Every reading only adds a way to match: it matches more text than Claude Code does, never on
 // purpose less.
 func (r rule) matches(command string) bool {
-	if r.re == nil {
+	if r.re == nil || r.re.MatchString(strings.TrimSpace(command)) {
 		return true
 	}
-	for _, seg := range separators.Split(command, -1) {
-		if seg = strings.TrimSpace(seg); seg != "" && r.re.MatchString(seg) {
+	ps := r.tool == "PowerShell"
+	for _, c := range split(ps, command) {
+		if r.re.MatchString(c.span) {
 			return true
 		}
-	}
-	if r.re.MatchString(strings.TrimSpace(command)) {
-		return true
-	}
-	shell := "bash"
-	if r.tool == "PowerShell" {
-		shell = "pwsh"
-	}
-	for _, words := range daemon.ShellCommands(shell, command) {
-		for _, form := range forms(r.tool, words) {
-			if r.re.MatchString(strings.Join(form, " ")) {
+		for _, form := range forms(ps, c.tokens) {
+			if r.re.MatchString(join(form, true)) || r.re.MatchString(join(form, false)) {
 				return true
 			}
 		}
@@ -88,9 +78,17 @@ func (r rule) matches(command string) bool {
 	return false
 }
 
-// separators split the text as written into the pieces a rule with quotes in it is matched
-// against. Splitting inside quotes too only adds pieces.
-var separators = regexp.MustCompile("&&|\\|\\||\\$\\(|[;|&{}()`\\r\\n]")
+// join is the tokens with one space between, as written or with quotes taken off.
+func join(ts []token, raw bool) string {
+	words := make([]string, len(ts))
+	for i, t := range ts {
+		words[i] = t.text
+		if raw {
+			words[i] = t.raw
+		}
+	}
+	return strings.Join(words, " ")
+}
 
 // wrappers run the command after their own arguments. Their options are not parsed: the command
 // is looked for at every word after the wrapper.
@@ -102,62 +100,48 @@ var keywords = map[string]bool{
 	"elseif": true, "foreach": true, "for": true, "switch": true, "try": true, "catch": true, "finally": true, "trap": true,
 }
 
-// forms are the ways a command's words are matched: as written, from each block it opens, and
-// with what runs it taken off.
-func forms(tool string, words []string) [][]string {
-	var out [][]string
+// forms are the token lists a command is matched as: the command without its braces, each
+// piece between braces (a block's commands), and of each the forms with what runs it taken off.
+func forms(ps bool, tokens []token) [][]token {
+	var out [][]token
 	seen := map[string]bool{}
-	var walk func(w []string)
-	walk = func(w []string) {
-		w = trimClosing(w)
-		key := strings.Join(w, string(rune(0)))
-		if len(w) == 0 || seen[key] {
+	var walk func(w []token)
+	walk = func(w []token) {
+		if len(w) == 0 {
+			return
+		}
+		key := join(w, true) + string(rune(0)) + join(w, false)
+		if seen[key] {
 			return
 		}
 		seen[key] = true
 		out = append(out, w)
-		// A block's commands start after the brace that opens it.
-		for i, x := range w {
-			if rest, ok := strings.CutPrefix(x, "{"); ok {
-				next := w[i+1:]
-				if rest != "" {
-					next = append([]string{rest}, next...)
-				}
-				walk(next)
-			}
-		}
-		first := strings.ToLower(w[0])
-		if tool == "PowerShell" {
-			if cmdlet, ok := aliases[first]; ok {
-				walk(append([]string{cmdlet}, w[1:]...))
-			}
+		first := strings.ToLower(w[0].text)
+		if cmdlet, ok := aliases[first]; ok && ps {
+			walk(append([]token{{raw: cmdlet, text: cmdlet}}, w[1:]...))
 		}
 		switch {
-		case keywords[first] || isAssignment(w[0]):
+		case keywords[first] || isAssignment(w[0].text):
 			walk(w[1:])
-		case wrappers[w[0]] && !(w[0] == "command" && len(w) > 1 && (w[1] == "-v" || w[1] == "-V")):
+		case wrappers[w[0].text] && !(w[0].text == "command" && len(w) > 1 && (w[1].text == "-v" || w[1].text == "-V")):
 			for i := 1; i < len(w); i++ {
 				walk(w[i:])
 			}
 		}
 	}
-	walk(words)
-	return out
-}
-
-// trimClosing takes off the braces that close blocks at the end of a command.
-func trimClosing(w []string) []string {
-	for len(w) > 0 {
-		last := strings.TrimRight(w[len(w)-1], "}")
-		if last == w[len(w)-1] {
-			return w
+	var whole, piece []token
+	for _, t := range tokens {
+		if t.brace {
+			walk(piece)
+			piece = nil
+			continue
 		}
-		w = w[:len(w)-1]
-		if last != "" {
-			return append(w[:len(w):len(w)], last)
-		}
+		whole = append(whole, t)
+		piece = append(piece, t)
 	}
-	return w
+	walk(piece)
+	walk(whole)
+	return out
 }
 
 func isAssignment(w string) bool {

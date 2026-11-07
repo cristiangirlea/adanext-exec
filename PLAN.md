@@ -79,9 +79,10 @@ Newest first.
   and `--settings`, cannot be read, and the install guide says so. A file that exists but
   cannot be read denies, and only a regular file is read, so a pipe cannot hold the hook.
   Matching follows Claude Code's documentation and reads more as a match, never on purpose
-  less: the text as written and, through the daemon's shell splitter, each command with quotes
-  taken off, `{ }` blocks included; after a wrapper every word is tried, since its options
-  cannot be parsed for every form. A
+  less: each command of a compound one (its own splitter, which keeps the text as written next
+  to the text with quotes taken off), `{ }` blocks and substitutions included, is tried both
+  ways; a reading only ever adds candidates. After a wrapper every word is tried, since its
+  options cannot be parsed for every form. A
   rewrite that would let Claude Code's own matcher see the original (`if false; then <text>;
   fi; ...`) was weighed and dropped: the text could close the `if` and run outside `run`. The
   binary is the hook itself (#7), and a rewrite names its build (`--hook-build`), which `run`
