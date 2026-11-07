@@ -38,6 +38,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	maxWait := flags.Duration("max-wait", 0, "give up after waiting this long for a slot (0: no limit)")
 	hookBuild := flags.String("hook-build", "", "the build of the hook that wrote this command line; run refuses another build's")
 	memory := flags.String("memory", "", "a ceiling on the memory of the command and all it starts: bytes, or with K, M or G")
+	memoryCeiling := flags.String("memory-ceiling", "", "how --memory is held on Linux: auto, cgroup (by the kernel, or the command is not run) or watchdog (default: the policy's, else auto)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -54,6 +55,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageFail(stderr, "a negative --max-wait")
 	case *maxWait > 0 && !*slots && *socket == "":
 		return usageFail(stderr, "--max-wait needs --slots")
+	}
+	ceiling := broker.MemoryCeiling(*memoryCeiling)
+	switch ceiling {
+	case "", broker.CeilingAuto, broker.CeilingCgroup, broker.CeilingWatchdog:
+	default:
+		return usageFail(stderr, "--memory-ceiling is auto, cgroup or watchdog")
 	}
 	if *hookBuild != "" {
 		id, err := build()
@@ -72,7 +79,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	c := broker.Command{
 		Stdin: stdin, Stdout: stdout, Stderr: stderr,
-		Timeout: *timeout, OutputCap: *outputCap, MemoryLimit: memoryLimit,
+		Timeout: *timeout, OutputCap: *outputCap, MemoryLimit: memoryLimit, MemoryCeiling: ceiling,
 		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
 	}
 	switch {

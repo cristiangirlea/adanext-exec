@@ -47,15 +47,16 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
     2026-11-06.
   - [x] **M4c: classification.** Which commands are heavy, configurable, and their fair share
     (#15). Done: PR #53, 2026-11-07.
-- [ ] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Done when
+- [x] **M5: memory ceilings,** per platform, reported where they cannot be enforced. Done when
   M5a to M5c are.
   - [x] **M5a: the ceiling and Windows** (#50). `Command.MemoryLimit`, `run --memory`, exit 122,
     the audit fields, and Windows' hard ceiling through the Job Object; the other platforms say
     not enforced. Done: PR #54, 2026-11-07.
   - [x] **M5b: the watchdog** (#51). Polling the tree's memory on Linux and macOS. Done: PR #55,
     2026-11-07.
-  - [ ] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
-    delegated.
+  - [x] **M5c: a delegated cgroup** (#52). A hard ceiling on Linux through cgroup v2 where one is
+    delegated, chosen by `--memory-ceiling` or the policy's `memory_ceiling`. Done: PR #60,
+    2026-11-07.
 - [x] **M6: Claude Code.** A PreToolUse hook for Bash and PowerShell. Done when M6a and M6b
   are.
   - [x] **M6a: the hook** (#56, #8, #5). `adanext-exec hook claude-code` judges Bash and
@@ -71,6 +72,17 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-07: M5c (PR #60, #52), which completes M5. The owner chose the kernel's cgroup files
+  with no dependency ("Kernel cgroup, no deps": no systemd-run, no D-Bus, no library) and a
+  setting with three modes, `auto` (the default), `cgroup` and `watchdog`, given by `run
+  --memory-ceiling`, `Command.MemoryCeiling` or the policy's `memory_ceiling`. The serve daemon
+  only hands out slots, so the cgroup is made by whatever runs the command, `run` or an SDK
+  caller, and `run` and `serve` need no separate rule. The caller's cgroup must hold the caller
+  alone: it moves into a leaf of its own and gives each command a cgroup beside it, started
+  straight into it with clone3, which is tried once first since a failed start cannot be
+  retried. The watch keeps running beside the cgroup, for a process that leaves it. CI hands
+  the Linux runner a delegated cgroup through sudo, as systemd would; the tests run
+  unelevated.
 - 2026-11-07: M6b (PR #59, #57). Claude Code gives a hook no merged view of its rules, so the
   hook reads the files Claude Code reads (managed with its drop-ins, user, project, local and
   the repository's local file) and applies only their Bash and PowerShell deny and ask rules,

@@ -95,6 +95,11 @@ type Tree struct {
 // process is killed and Start returns ErrNotContained.
 func Start(cmd *exec.Cmd) (*Tree, error) { return StartLimited(cmd, 0) }
 
+// StartCeiling is StartLimited: the job holds the ceiling on Windows whatever the mode.
+func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error) {
+	return StartLimited(cmd, memoryLimit)
+}
+
 // StartLimited is Start with a ceiling on the committed memory of the whole tree, in bytes; 0
 // is none. The job enforces it: an allocation past it fails, and the watch (watchMemory) then
 // kills the tree, so the command is stopped, not left to run on with failing allocations.

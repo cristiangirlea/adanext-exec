@@ -185,16 +185,29 @@ func (t *Tree) setMemoryErr(err error) {
 	}
 }
 
-// MemoryEnforced reports whether a ceiling was set and is watched here.
-func (t *Tree) MemoryEnforced() bool { return t.enforced }
+// MemoryEnforced reports whether a ceiling was set and is watched or held here.
+func (t *Tree) MemoryEnforced() bool { return t.enforced || t.cg != nil }
+
+// MemoryHard reports whether the kernel holds the ceiling: the command runs in a cgroup of its
+// own with memory.max set (StartCeiling, Linux).
+func (t *Tree) MemoryHard() bool { return t.cg != nil }
 
 // FinalMemory is the tree's memory once the command has ended: whether it passed its ceiling,
-// the most resident memory the watch saw it hold (0 when nothing was watched), and why the
-// ceiling could not be watched, when it could not. It stops the watch and waits for it first.
+// the most memory the watch saw it hold or its cgroup's peak, whichever is more (0 when neither
+// is known), and why the ceiling could not be watched, when it could not. It stops the watch
+// and waits for it first. A tree in a cgroup passed its ceiling also when the kernel's
+// out-of-memory killer acted in that cgroup.
 func (t *Tree) FinalMemory() (exceeded bool, peak uint64, err error) {
 	t.stopWatching()
 	t.mu.Lock()
 	err = t.memoryErr
 	t.mu.Unlock()
-	return t.exceeded.Load(), t.peakSeen.Load(), err
+	exceeded, peak = t.exceeded.Load(), t.peakSeen.Load()
+	if t.cg != nil {
+		over, cgPeak, cgErr := t.cg.final()
+		exceeded = exceeded || over
+		peak = max(peak, cgPeak)
+		err = errors.Join(err, cgErr)
+	}
+	return exceeded, peak, err
 }

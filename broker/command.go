@@ -70,6 +70,12 @@ type Command struct {
 	// (Result.MemoryExceeded). Where the platform cannot enforce it, the command runs without
 	// it and Result.MemoryEnforced says so; docs/design.md lists the platforms.
 	MemoryLimit int64
+	// MemoryCeiling says how MemoryLimit is held on Linux: in a cgroup of the command's own
+	// (CeilingCgroup), by the watch (CeilingWatchdog), or the first where it can be and the second
+	// otherwise (CeilingAuto). Empty means the Policy's choice, and CeilingAuto without one.
+	// Result.MemoryHard says whether the kernel held the ceiling. docs/design.md says which hosts
+	// have a cgroup to give.
+	MemoryCeiling MemoryCeiling
 
 	// Slots, when set, makes Run wait for one of the daemon's heavy-command slots before the
 	// command starts, and hold it until the command has ended. Nil shares no limits.
@@ -96,6 +102,43 @@ const (
 	ShellCmd Shell = "cmd"
 )
 
+// MemoryCeiling is how a memory ceiling is held where there is a choice (Linux).
+type MemoryCeiling string
+
+// The ways a memory ceiling can be held.
+const (
+	// CeilingAuto holds the ceiling in a cgroup of the command's own where one can be made, and
+	// watches it otherwise.
+	CeilingAuto MemoryCeiling = "auto"
+	// CeilingCgroup holds the ceiling in the kernel: a cgroup of the command's own on Linux, the
+	// Job Object on Windows. Where it cannot be, the command is not run (ErrNoHardCeiling); on
+	// macOS it never can.
+	CeilingCgroup MemoryCeiling = "cgroup"
+	// CeilingWatchdog only watches the ceiling (Linux and macOS) and never touches cgroups. Windows
+	// still holds it in the Job Object.
+	CeilingWatchdog MemoryCeiling = "watchdog"
+)
+
+// valid reports whether the ceiling is one of the three, or empty.
+func (m MemoryCeiling) valid() bool {
+	return m == "" || m == CeilingAuto || m == CeilingCgroup || m == CeilingWatchdog
+}
+
+// treeCeiling is the ceiling as the tree package names it; empty is CeilingAuto.
+func (m MemoryCeiling) treeCeiling() tree.Ceiling {
+	switch m {
+	case CeilingCgroup:
+		return tree.CeilingCgroup
+	case CeilingWatchdog:
+		return tree.CeilingWatch
+	}
+	return tree.CeilingAuto
+}
+
+// ErrNoHardCeiling means CeilingCgroup was asked for a command with a memory limit, and the
+// kernel cannot hold the ceiling here, so the command was not run; the error says why.
+var ErrNoHardCeiling = tree.ErrNoHardCeiling
+
 // ErrInvalid means the Command is not one Run can run as given; the error says why.
 var ErrInvalid = errors.New("invalid command")
 
@@ -120,6 +163,9 @@ func (c Command) cmd() (*exec.Cmd, error) {
 	}
 	if c.MemoryLimit < 0 {
 		return nil, invalid("a negative memory limit")
+	}
+	if !c.MemoryCeiling.valid() {
+		return nil, invalid("memory ceiling %q is not auto, cgroup or watchdog", c.MemoryCeiling)
 	}
 	var cmd *exec.Cmd
 	switch {

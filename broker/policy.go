@@ -92,6 +92,8 @@ type Policy struct {
 	builtin map[string]Decision
 	rules   []policyRule
 	def     Decision
+	// ceiling is how the policy's commands hold a memory ceiling; empty leaves it to the Command.
+	ceiling MemoryCeiling
 	// err is why the policy could not be read, kept so that what refuses says why.
 	err error
 }
@@ -108,6 +110,8 @@ type policyFile struct {
 	// Default is raw, so a default given as "" or null is told from one left out.
 	Default json.RawMessage `json:"default"`
 	Rules   []ruleFile      `json:"rules"`
+	// MemoryCeiling is raw for the same reason.
+	MemoryCeiling json.RawMessage `json:"memory_ceiling"`
 }
 
 type ruleFile struct {
@@ -141,12 +145,15 @@ func DefaultPolicy() *Policy {
 //	  "rules": [
 //	    {"name": "git-push", "decision": "ask"},
 //	    {"name": "no-force", "match": "--force\\b", "decision": "refuse"}
-//	  ]
+//	  ],
+//	  "memory_ceiling": "auto"
 //	}
 //
 // A rule without "match" names a built-in rule and gives it another decision; a rule with
 // "match" is the policy's own, a regular expression (Go's syntax) tested against the command
-// line. "default" decides a command no rule matches; it is allow when left out. Anything else,
+// line. "default" decides a command no rule matches; it is allow when left out.
+// "memory_ceiling" is how a memory ceiling is held (auto, cgroup or watchdog: see
+// Command.MemoryCeiling) for a Command that does not say; left out, it is auto. Anything else,
 // an unknown field, a name used twice, a decision that is not allow, ask or refuse, or a match
 // that does not compile, is an error (ErrPolicy). With an error comes a Policy that refuses
 // every command with that error, so a caller that misses the error still runs nothing.
@@ -178,6 +185,13 @@ func parsePolicy(data []byte) (*Policy, error) {
 			return nil, fmt.Errorf("%w: default %s is not allow, ask or refuse", ErrPolicy, f.Default)
 		}
 		p.def = d
+	}
+	if f.MemoryCeiling != nil {
+		var m MemoryCeiling
+		if err := json.Unmarshal(f.MemoryCeiling, &m); err != nil || m == "" || !m.valid() {
+			return nil, fmt.Errorf("%w: memory_ceiling %s is not auto, cgroup or watchdog", ErrPolicy, f.MemoryCeiling)
+		}
+		p.ceiling = m
 	}
 	builtins := guard.Names()
 	for _, name := range builtins {

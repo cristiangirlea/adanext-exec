@@ -51,5 +51,7 @@ func helperPlatform(mode string) {
 		time.Sleep(time.Minute)
 		_ = held
 		os.Exit(0)
+	default:
+		helperCgroup(mode)
 	}
 }

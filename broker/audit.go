@@ -143,6 +143,7 @@ type auditRecord struct {
 	QueueWait  int64    `json:"queue_wait_ms,omitempty"` // the wait for a heavy-command slot
 	MemoryMax  int64    `json:"memory_limit,omitempty"`  // the ceiling asked for
 	Enforced   *bool    `json:"memory_enforced,omitempty"`
+	Hard       *bool    `json:"memory_hard,omitempty"` // held by the kernel, not only watched
 	PeakMemory int64    `json:"peak_memory,omitempty"`
 	Error      string   `json:"error,omitempty"`
 }
@@ -208,8 +209,8 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 	if c.MemoryLimit > 0 {
 		rec.MemoryMax = c.MemoryLimit
 		if ran {
-			enforced := res.MemoryEnforced
-			rec.Enforced = &enforced
+			enforced, hard := res.MemoryEnforced, res.MemoryHard
+			rec.Enforced, rec.Hard = &enforced, &hard
 		}
 	}
 	return rec

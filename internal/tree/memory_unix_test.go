@@ -5,6 +5,7 @@ package tree
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"sync"
 	"syscall"
 	"testing"
@@ -28,6 +29,24 @@ func startLimited(t *testing.T, mode string, limit uint64) (*Tree, func() error)
 		tr.Close()
 	})
 	return tr, func() error { return tr.WaitExit() }
+}
+
+// startCeiling is startLimited through StartCeiling.
+func startCeiling(t *testing.T, mode string, limit uint64, ceiling Ceiling) (*Tree, *exec.Cmd) {
+	t.Helper()
+	cmd := helperCmd(mode)
+	tr, err := StartCeiling(cmd, limit, ceiling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = tr.Kill()
+		tr.stopWatching()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		tr.Close()
+	})
+	return tr, cmd
 }
 
 // A tree that grows past its ceiling is killed by the watch, and says so.

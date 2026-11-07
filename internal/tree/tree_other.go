@@ -23,6 +23,14 @@ func (t *Tree) Close() {}
 // StartLimited refuses, as Start does.
 func StartLimited(cmd *exec.Cmd, memoryLimit uint64) (*Tree, error) { return nil, ErrUnsupported }
 
+// StartCeiling refuses, as Start does.
+func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error) {
+	return nil, ErrUnsupported
+}
+
+// MemoryHard is never reached on this platform.
+func (t *Tree) MemoryHard() bool { return false }
+
 // MemoryEnforced is never reached on this platform.
 func (t *Tree) MemoryEnforced() bool { return false }
 
