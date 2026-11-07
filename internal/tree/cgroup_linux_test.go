@@ -177,6 +177,38 @@ func TestTheSetupPutsBackWhatItChanged(t *testing.T) {
 	}
 }
 
+// A failed step that could not be undone runs nothing, in auto too: the caller or a cgroup is
+// left changed, which is not what the watched fallback assumes.
+func TestAStepThatCannotBeUndoneRunsNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes a read-only file: the failed move back is not tried")
+	}
+	_, app := fakeCgroups(t, true, nil)
+	writeTest(filepath.Join(app, brokerLeaf, "cgroup.procs"), "")
+	if err := os.Remove(filepath.Join(app, "cgroup.subtree_control")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(app, "cgroup.procs"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	cmd := helperCmd("exit")
+	if _, err := StartCeiling(cmd, 64<<20, CeilingAuto); !errors.Is(err, errNotPutBack) || cmd.Process != nil {
+		t.Errorf("a move back that failed: %v, process %v; want errNotPutBack and nothing started", err, cmd.Process)
+	}
+
+	// The setup works; the command's cgroup cannot be set, nor removed.
+	_, app = fakeCgroups(t, true, nil)
+	writeTest(filepath.Join(app, brokerLeaf, "cgroup.procs"), "")
+	oldRemove, oldWait := removeCgroupTree, cgroupRemoveWait
+	removeCgroupTree = func(string) error { return syscall.EBUSY }
+	cgroupRemoveWait = 20 * time.Millisecond
+	t.Cleanup(func() { removeCgroupTree, cgroupRemoveWait = oldRemove, oldWait })
+	cmd = helperCmd("exit")
+	if _, err := StartCeiling(cmd, 64<<20, CeilingAuto); !errors.Is(err, errNotPutBack) || cmd.Process != nil {
+		t.Errorf("a cgroup that stays: %v, process %v; want errNotPutBack and nothing started", err, cmd.Process)
+	}
+}
+
 // A cgroup that cannot be removed is said, not dropped.
 func TestARemovalThatFailsIsSaid(t *testing.T) {
 	old := cgroupRemoveWait
@@ -414,12 +446,16 @@ func TestCgroupLetsATreeUnderItsCeilingRun(t *testing.T) {
 
 // A process that moves itself out of the command's cgroup (the same user may) is no longer held
 // by the kernel: the watch finds it and stops the tree, with the error.
+// The same holds where the broker cannot read its own memory, which would leave a watched
+// ceiling unwatched.
 func TestATreeThatLeavesItsCgroupIsStopped(t *testing.T) {
-	dir := testCgroup(t)
-	got := runIn(t, dir, "cgroup-escape")
-	for k, want := range map[string]string{"stopped": "true", "left": "true", "killed": "true", "gone": "true"} {
-		if got[k] != want {
-			t.Errorf("%s = %q; want %q (all: %v)", k, got[k], want, got)
+	for _, mode := range []string{"cgroup-escape", "cgroup-escape-noprobe"} {
+		dir := testCgroup(t)
+		got := runIn(t, dir, mode)
+		for k, want := range map[string]string{"stopped": "true", "left": "true", "killed": "true", "gone": "true"} {
+			if got[k] != want {
+				t.Errorf("%s: %s = %q; want %q (all: %v)", mode, k, got[k], want, got)
+			}
 		}
 	}
 }
@@ -490,7 +526,10 @@ func helperCgroup(mode string) {
 		report("gone", errors.Is(statErr, fs.ErrNotExist))
 		report("leaf", strings.HasSuffix(strings.TrimSpace(string(own)), "/"+brokerLeaf))
 		os.Exit(0)
-	case "cgroup-escape":
+	case "cgroup-escape", "cgroup-escape-noprobe":
+		if mode == "cgroup-escape-noprobe" {
+			probeRSS = func(int) (uint64, error) { return 0, errors.New("no memory to read") }
+		}
 		cmd := helperCmd("leave")
 		tr, err := StartCeiling(cmd, 256<<20, CeilingCgroup)
 		if err != nil {

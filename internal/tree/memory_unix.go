@@ -40,8 +40,10 @@ func startWatched(cmd *exec.Cmd, memoryLimit uint64, cg *cgroup) (*Tree, error) 
 	t.readMark = func(pid int) (bool, error) { return envHas(pid, t.marker) }
 	if memoryLimit > 0 {
 		// A platform that cannot read the broker's own memory cannot read the tree's either:
-		// then nothing is watched, and MemoryEnforced says so.
-		if _, err := probeRSS(os.Getpid()); err == nil {
+		// then nothing is watched, and MemoryEnforced says so. A tree in a cgroup is watched
+		// whatever the probe says, for a process that leaves it: a memory it cannot read then
+		// stops the tree.
+		if _, err := probeRSS(os.Getpid()); err == nil || cg != nil {
 			t.enforced = true
 			t.watchMemory()
 		}

@@ -39,9 +39,11 @@ type Result struct {
 	// without it.
 	MemoryEnforced bool
 	// MemoryHard is true when the kernel held Command.MemoryLimit: a cgroup of the command's own
-	// on Linux, the Job Object on Windows. A process that leaves that cgroup on Linux stops the
-	// tree, and Run returns the error. False with MemoryEnforced true means the ceiling was
-	// watched (Linux and macOS), so a spike shorter than one read could pass.
+	// on Linux, the Job Object on Windows. On Linux it holds every process that stays in that
+	// cgroup; one the same user moves out is held only by the watch, which stops the tree when a
+	// read finds it (Run returns the error), and can miss one that leaves and ends between two
+	// reads. False with MemoryEnforced true means the ceiling was watched (Linux and macOS), so a
+	// spike shorter than one read could pass.
 	MemoryHard bool
 	// MemoryExceeded is true when the command's tree went over Command.MemoryLimit and was
 	// stopped.

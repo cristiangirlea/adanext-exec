@@ -101,25 +101,40 @@ func setUpCgroup() (string, error) {
 		return "", fmt.Errorf("start a process into a cgroup: %w", err)
 	}
 	leaf := filepath.Join(dir, brokerLeaf)
-	if err := os.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+	err = os.Mkdir(leaf, 0o755)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", fmt.Errorf("make %s: %w", leaf, err)
+	}
+	made := err == nil
+	// unmake removes the leaf this setup made; one it found is left as it was.
+	unmake := func(err error) error {
+		if !made {
+			return err
+		}
+		if rm := os.Remove(leaf); rm != nil {
+			return errors.Join(err, fmt.Errorf("%w: %s stays: %v", errNotPutBack, leaf, rm))
+		}
+		return err
 	}
 	me := strconv.Itoa(self)
 	if err := writeCgroupFile(filepath.Join(leaf, "cgroup.procs"), me); err != nil {
-		_ = os.Remove(leaf)
-		return "", fmt.Errorf("move this process into %s: %w", leaf, err)
+		return "", unmake(fmt.Errorf("move this process into %s: %w", leaf, err))
 	}
 	if err := writeCgroupFile(filepath.Join(dir, "cgroup.subtree_control"), "+memory"); err != nil {
 		err = fmt.Errorf("turn on the memory controller in %s: %w", dir, err)
 		// Back to where it was, and the leaf gone; a step back that fails is said too.
 		if back := writeCgroupFile(filepath.Join(dir, "cgroup.procs"), me); back != nil {
-			return "", errors.Join(err, fmt.Errorf("this process stays in %s: %w", leaf, back))
+			return "", errors.Join(err, fmt.Errorf("%w: this process stays in %s: %v", errNotPutBack, leaf, back))
 		}
-		_ = os.Remove(leaf)
-		return "", err
+		return "", unmake(err)
 	}
 	return dir, nil
 }
+
+// errNotPutBack means a cgroup step that failed could not be undone: the caller or a cgroup is
+// left changed. The command is then not run in any mode, since the state is not what the
+// fallback assumes.
+var errNotPutBack = errors.New("a cgroup change could not be undone")
 
 // ownCgroup reads this process's cgroup v2 path from /proc/self/cgroup: the one line "0::PATH".
 // A line of a cgroup v1 hierarchy means a hybrid setup, where memory may be v1's.
@@ -199,7 +214,9 @@ func newCgroup(limit uint64) (*cgroup, error) {
 		return nil, fmt.Errorf("make the command's cgroup: %w", err)
 	}
 	fail := func(err error) (*cgroup, error) {
-		g.remove()
+		if rm := g.remove(); rm != nil {
+			err = errors.Join(err, fmt.Errorf("%w: the command's cgroup stays: %v", errNotPutBack, rm))
+		}
 		return nil, err
 	}
 	if err := writeCgroupFile(filepath.Join(g.dir, "memory.max"), strconv.FormatUint(limit, 10)); err != nil {
@@ -260,7 +277,7 @@ func (g *cgroup) remove() error {
 	g.closeFD()
 	deadline := time.Now().Add(cgroupRemoveWait)
 	for {
-		err := removeTree(g.dir)
+		err := removeCgroupTree(g.dir)
 		if err == nil || time.Now().After(deadline) {
 			return err
 		}
@@ -289,6 +306,9 @@ func (g *cgroup) outside(pid int) (string, error) {
 	}
 	return "", fmt.Errorf("no cgroup v2 path for process %d", pid)
 }
+
+// removeCgroupTree is how remove removes a cgroup; tests replace it.
+var removeCgroupTree = removeTree
 
 // removeTree removes a cgroup's children, deepest first, then the cgroup.
 func removeTree(dir string) error {
@@ -361,10 +381,13 @@ func hasWord(list []byte, word string) bool {
 
 // StartCeiling is StartLimited with a choice of how the ceiling is held. With a ceiling and
 // CeilingAuto or CeilingCgroup, the command is started straight into a cgroup of its own with
-// memory.max set, so the kernel holds the ceiling. The watch runs as well: a process of the
-// tree found outside that cgroup (the same user may move it out) stops the tree, with the
-// error. Where no such cgroup can be made, CeilingAuto watches the ceiling only, and
-// CeilingCgroup does not start the command (ErrNoHardCeiling).
+// memory.max set, so the kernel holds the ceiling for every process of the tree that stays in
+// that cgroup. The watch runs as well, and also reads where each process is: one it finds
+// outside the cgroup (the same user may move it out, on purpose) stops the tree, with the
+// error. That is sampled, as the watch is: a process that leaves and ends between two reads is
+// not seen. Where no such cgroup can be made, CeilingAuto watches the ceiling only, and
+// CeilingCgroup does not start the command (ErrNoHardCeiling). A failed step that could not be
+// undone starts the command in no mode.
 func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error) {
 	if memoryLimit == 0 || mode == CeilingWatch {
 		return StartLimited(cmd, memoryLimit)
@@ -372,7 +395,10 @@ func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error
 	g, err := newCgroup(memoryLimit)
 	if err != nil {
 		if mode == CeilingCgroup {
-			return nil, fmt.Errorf("%w: %v", ErrNoHardCeiling, err)
+			return nil, fmt.Errorf("%w: %w", ErrNoHardCeiling, err)
+		}
+		if errors.Is(err, errNotPutBack) {
+			return nil, err
 		}
 		return StartLimited(cmd, memoryLimit)
 	}
@@ -384,7 +410,9 @@ func StartCeiling(cmd *exec.Cmd, memoryLimit uint64, mode Ceiling) (*Tree, error
 	t, err := startWatched(cmd, memoryLimit, g)
 	g.closeFD()
 	if err != nil {
-		_ = g.remove()
+		if rm := g.remove(); rm != nil {
+			err = errors.Join(err, fmt.Errorf("%w: the command's cgroup stays: %v", errNotPutBack, rm))
+		}
 		return nil, err
 	}
 	return t, nil

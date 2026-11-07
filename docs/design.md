@@ -229,12 +229,19 @@ Per command:
       in `memory.events` marks the command over its ceiling (122), and `memory.peak` (Linux
       5.19) is its peak. The cgroup is removed once the command is reaped; one that cannot be
       is reported (exit 120).
-    - The watch runs as well, and also reads where each process of the tree is. The same user
-      may move a process out of the command's cgroup (into the broker's leaf), where the kernel
-      no longer holds the ceiling for it: the watch then stops the tree within one read, and the
-      result carries the error (exit 120). So hard means held by the kernel for as long as the
-      tree stays in its cgroup, which a command can leave only on purpose; a Job Object on
-      Windows cannot be left at all.
+    - The watch runs as well, also where the broker cannot read its own memory, and reads where
+      each process of the tree is. The same user may move a process out of the command's cgroup
+      (into the broker's leaf), where the kernel no longer holds the ceiling for it, and no
+      arrangement of the same user's files can forbid it: a delegated cgroup is the user's. The
+      watch stops the tree when a read finds a process outside, and the result carries the error
+      (exit 120). That is sampled, as the watch is: a process that leaves, allocates and ends
+      between two reads (100 ms) is not seen. So hard means held by the kernel for every process
+      that stays in the command's cgroup, which a command leaves only on purpose; a Job Object on
+      Windows cannot be left at all. The ceiling protects the machine from a runaway command, not
+      from one set on escaping it, as the policy does not either (#21).
+    - A step that failed and could not be undone (the caller left in the leaf, a cgroup that
+      stays) runs the command in no mode, with the error: the state is not what the fallback
+      assumes.
     - Which hosts get it: a caller started in a cgroup delegated to its user and holding it
       alone, as a systemd unit with `Delegate=yes` is (a user service, or `systemd-run --user
       --scope -p Delegate=yes adanext-exec run ...`). The serve daemon only hands out slots, so
