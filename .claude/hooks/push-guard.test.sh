@@ -224,6 +224,11 @@ allowed 'cat <<-EOF\n\tfoo\\\n\tEOF\ngit push origin main\n\tEOF\ngit status'
 # Backticks, eval, aliases, arithmetic and a nested shell.
 refused 'echo `git pu\\\nsh origin main`'
 refused 'echo `git pu\\\\\nsh origin main`'
+refused 'echo `git status\\\\\\\ngit push origin main`'
+refused 'echo `git status\\\\\\\\\ngit push origin main`'
+refused 'echo `echo $(git pu\\\\\nsh origin main)`'
+grep -q 'inside backticks' "$tmp/err" || fail "the nested join was refused for another reason: $(cat "$tmp/err")"
+allowed 'echo `git status \\\n--short`'
 refused "eval 'git pu\\\\\\nsh origin main'"
 refused 'git split'
 refused 'echo $(\\\n(1<<x))\ngit push origin main'
@@ -512,6 +517,12 @@ printf '{"cwd":"%s","tool_name":"Bash","tool_input":{"command":"git push origin 
 # The shell may add its own line for the signal, so only the exit and the reason are checked.
 [ $? -eq 2 ] && grep -q 'the hook failed' "$tmp/err" ||
   fail "git push under a git that kills the hook: not refused as a failure: $(cat "$tmp/err")"
+# The same when only a line join makes the command a push: the raw text mentions none.
+n=$((n + 1))
+printf '%s' '{"cwd":"'"$onfeat"'","tool_name":"Bash","tool_input":{"command":"gi\\\nt pu\\\nsh origin my-branch"}}' |
+  PATH="$tmp/shim:$PATH" sh "$hook" 2>"$tmp/err"
+[ $? -eq 2 ] && grep -q 'the hook failed' "$tmp/err" ||
+  fail "a joined git push under a git that kills the hook: not refused as a failure: $(cat "$tmp/err")"
 # A Windows cwd, backslashes JSON-escaped, as Claude Code sends it on Windows.
 if command -v cygpath >/dev/null 2>&1; then
   winmain=$(cygpath -w "$onmain" | sed 's/\\/\\\\/g')

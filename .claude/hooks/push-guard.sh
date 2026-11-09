@@ -224,8 +224,16 @@ check_cmd() {
           cs=${cs#?}
           continue
         fi
-        # Inside backticks the shell first turns \\ into \, which then joins the same way.
-        case $ch$lang$stk in '\sh'[OD]*) case $cs in \\"$nl"*) cs=${cs#??}; continue ;; esac ;; esac
+        # Inside backticks the shell first halves a run of backslashes, and shells differ on what
+        # the rest of the run then does to a newline after it.
+        case $lang$ch$cs in
+          'sh\\'*)
+            case $soh$stk in
+              *"$soh"[OD]*)
+                br=${cs%%[!\\]*}
+                case ${cs#"$br"} in "$nl"*) refuse "backslashes before a newline inside backticks cannot be read" ;; esac ;;
+            esac ;;
+        esac
         if [ "$ch" = "$esc" ]; then
           cur=$cur$ch${cs%"${cs#?}"} cs=${cs#?}
         elif [ "$ch$lang" = '`sh' ]; then
