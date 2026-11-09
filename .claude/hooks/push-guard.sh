@@ -128,13 +128,13 @@ json_load() {
   json_object json_top && [ -n "$jread" ]
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
-# cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
-# PowerShell line continuations); other newlines stay. CRLF and a lone CR are newlines (PowerShell
+# cannot start another escape. A backtick before a newline joins the lines (PowerShell's line
+# continuation); other newlines stay, and check_cmd joins sh's. CRLF and a lone CR are newlines (PowerShell
 # ends a line at a CR). A tab stays a tab: in quotes it is part of the word. Other control
 # characters: spaces.
 unescape() {
   sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r\\n/\\n/g' -e 's/\\r/\\n/g' \
-    -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
+    -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
     -e 's/\\t/	/g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
@@ -218,6 +218,14 @@ check_cmd() {
       o\') cur=$cur$ch; [ "$lang" = cmd ] || md=s ;;
       o\") cur=$cur$ch md=d ;;
       [od]\\ | [od]\`)
+        # sh removes a backslash and the newline after it, here but not in single quotes or a
+        # quoted heredoc: what comes next carries on from what came before.
+        if [ "$ch$lang" = '\sh' ] && [ "${cs%"${cs#?}"}" = "$nl" ]; then
+          cs=${cs#?}
+          continue
+        fi
+        # Inside backticks the shell first turns \\ into \, which then joins the same way.
+        case $ch$lang$stk in '\sh'[OD]*) case $cs in \\"$nl"*) cs=${cs#??}; continue ;; esac ;; esac
         if [ "$ch" = "$esc" ]; then
           cur=$cur$ch${cs%"${cs#?}"} cs=${cs#?}
         elif [ "$ch$lang" = '`sh' ]; then
@@ -245,6 +253,7 @@ check_cmd() {
         esac ;;
       o\<)
         cur=$cur$ch
+        skip_joins
         case $lang$cs in
           sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
           sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in a*) ;; *) heredoc_start ;; esac ;;
@@ -258,17 +267,27 @@ check_cmd() {
   while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
   return 0
 }
+# skip_joins: in sh, takes any backslash and newline at the front of the text off it.
+skip_joins() {
+  [ "$lang" = sh ] || return 0
+  while :; do case $cs in \\"$nl"*) cs=${cs#??} ;; *) return 0 ;; esac; done
+}
 # heredoc_start: after <<, queues the heredoc's word, if it has one: u or q (unquoted, quoted), - or _ (<<- or <<),
 # then the word without its quotes.
 heredoc_start() {
+  skip_joins
   # A heredoc's word starts with a letter, _, a quote or a backslash: $((1<<3)) is arithmetic.
   hw=${cs#-}
   hw=${hw#"${hw%%[!\ \	]*}"}
   case $hw in [A-Za-z_\'\"\\]*) ;; *) return 0 ;; esac
   hd=_
   case $cs in -*) hd=- cs=${cs#-} cur=$cur- ;; esac
-  hb=${cs%%[!\ \	]*}
-  cs=${cs#"$hb"}
+  hb=
+  while :; do
+    hp=${cs%%[!\ \	]*}
+    hb=$hb$hp cs=${cs#"$hp"}
+    case $cs in \\"$nl"*) cs=${cs#??} ;; *) break ;; esac
+  done
   # The word ends at a blank or an operator outside quotes, and loses one level of quotes.
   hr=$cs hw= hq=u
   while :; do
@@ -283,11 +302,13 @@ heredoc_start() {
           case $hr in
             \\*)
               hr=${hr#?} hc=${hr%"${hr#?}"} hr=${hr#?}
-              case $hc in [\"\\\$\`]) hw=$hw$hc ;; *) hw=$hw\\$hc ;; esac ;;
+              case $hc in "$nl") ;; [\"\\\$\`]) hw=$hw$hc ;; *) hw=$hw\\$hc ;; esac ;;
             *) hr=${hr#\"}; break ;;
           esac
         done ;;
-      \\*) hr=${hr#?} hw=$hw${hr%"${hr#?}"} hr=${hr#?} hq=q ;;
+      \\*)
+        hr=${hr#?} hc=${hr%"${hr#?}"} hr=${hr#?}
+        case $hc in "$nl") ;; *) hw=$hw$hc hq=q ;; esac ;;
       *) break ;;
     esac
   done
@@ -306,8 +327,21 @@ heredoc_skip() {
     hbody=
     while [ -n "$cs" ]; do
       case $cs in *"$nl"*) hl=${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) hl=$cs cs= ;; esac
+      # An unquoted heredoc joins a line that ends in an odd run of backslashes to the next.
+      hjd=
+      while [ "$hq" = u ] && [ -n "$cs" ]; do
+        hj=$hl
+        while :; do case $hj in *'\\') hj=${hj%??} ;; *) break ;; esac; done
+        case $hj in *'\') ;; *) break ;; esac
+        hl=${hl%?} hjd=1
+        case $cs in *"$nl"*) hl=$hl${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) hl=$hl$cs cs= ;; esac
+      done
       [ "$hd" = - ] && hl=${hl#"${hl%%[!	]*}"}
-      [ "$hl" = "$he" ] && break
+      if [ "$hl" = "$he" ]; then
+        # bash ends the heredoc at a word split this way, and dash does not.
+        [ -z "$hjd" ] || refuse "shells differ on where this heredoc ends"
+        break
+      fi
       hbody=$hbody$hl$nl
     done
     case $hq$hbody in u*'$('* | u*'`'*) (check_cmd "$hbody") || exit $? ;; esac
@@ -664,7 +698,7 @@ check_api() {
 main() {
   depth=0 fromstdin=0 gopts=
   if [ -z "$loaded" ]; then
-    case $input in *'\u'*) refuse "the hook could not read this command, and a \\u escape can spell anything" ;; esac
+    case $input in *'\u'* | *'\\\n'*) refuse "the hook could not read this command, and an escape or a line join can spell anything" ;; esac
     mentions "$input" && refuse "the hook could not read this command, and it mentions a push, a tag, a release, a merge or the API"
     exit 0
   fi
@@ -710,7 +744,7 @@ if json_load; then
   loaded=1
   case $jcmd in
     *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \
-      *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
+      *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u* | *'\\\n'*) ;;
     *) exit 0 ;;
   esac
 fi
@@ -721,6 +755,6 @@ soh=$(printf '\037')
 (main)
 status=$?
 case $status in 0 | 2) exit "$status" ;; esac
-mentions "$input" || exit 0
+case $input in *'\u'* | *'\\\n'*) ;; *) mentions "$input" || exit 0 ;; esac
 printf 'push-guard: the hook failed (status %s) on a command that mentions a push, a tag, a release, a merge or the API. Hand over the command.\n' "$status" >&2
 exit 2
