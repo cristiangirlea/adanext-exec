@@ -231,6 +231,9 @@ grep -q 'inside backticks' "$tmp/err" || fail "the nested join was refused for a
 allowed 'echo `git status \\\n--short`'
 refused "echo \`bash -c 'git pu\\\\\\\\\\nsh origin main'\`"
 grep -q 'inside backticks' "$tmp/err" || fail "the join in single quotes was refused for another reason: $(cat "$tmp/err")"
+refused 'cat <<EOF\n`git pu\\\\\\\nsh origin main`\nEOF'
+grep -q 'inside backticks' "$tmp/err" || fail "the run in a heredoc body was refused for another reason: $(cat "$tmp/err")"
+allowed 'cat <<EOF\n`date` x\\\ny\nEOF'
 refused 'echo `cat <<E\\\\\nOF\nx\nEOF\ngit push origin main`'
 grep -q 'inside backticks' "$tmp/err" || fail "the join in a heredoc word was refused for another reason: $(cat "$tmp/err")"
 refused "eval 'git pu\\\\\\nsh origin main'"

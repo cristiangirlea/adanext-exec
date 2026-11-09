@@ -336,6 +336,8 @@ heredoc_skip() {
         hj=$hl
         while :; do case $hj in *'\\') hj=${hj%??} ;; *) break ;; esac; done
         case $hj in *'\') ;; *) break ;; esac
+        # The join leaves the rest of a longer run, which backtick_open could no longer see.
+        case $hl in *'\\') case $hbody$hl in *'`'*) refuse "backslashes before a newline inside backticks cannot be read" ;; esac ;; esac
         hl=${hl%?} hjd=1
         case $cs in *"$nl"*) hl=$hl${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) hl=$hl$cs cs= ;; esac
       done
