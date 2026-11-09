@@ -291,6 +291,72 @@ raw 2 '{"tool_input":{"command":null},"note":"release"}'
 raw 0 'not json: ls -la'
 raw 0 '{"tool_input":{"command":"ls -la'
 raw 0 ''
+# The command is tool_input.command, and the cwd and tool name are top-level: a key of that name
+# anywhere else is not them, before or after the real one.
+raw 2 '{"cwd":"'"$onfeat"'","meta":{"command":"ls"},"tool_input":{"command":"git push origin main"}}'
+raw 2 '{"cwd":"'"$onfeat"'","command":"ls","tool_input":{"command":"git push origin main"}}'
+raw 2 '{"cwd":"'"$onfeat"'","list":[1,{"command":"ls"},[true]],"tool_input":{"command":"git push origin main"}}'
+raw 2 '{"cwd":"'"$onfeat"'","tool_input":{"options":{"command":"ls"},"command":"git push origin main"}}'
+raw 0 '{"cwd":"'"$onfeat"'","meta":{"command":"git tag v1"},"tool_input":{"command":"git status"}}'
+raw 0 '{"cwd":"'"$onfeat"'","tool_input":{"command":"git status","options":{"command":"git tag v1"}}}'
+raw 2 '{"meta":{"cwd":"'"$onfeat"'"},"cwd":"'"$onmain"'","tool_input":{"command":"git push"}}'
+raw 0 '{"tool_input":{"cwd":"'"$onmain"'","command":"git push"},"cwd":"'"$onfeat"'"}'
+raw 2 '{"cwd":"'"$onfeat"'","meta":{"tool_name":"PowerShell"},"tool_name":"Bash","tool_input":{"command":"echo `git tag v2`"}}'
+# Other values are skipped whole: brackets and escaped quotes in a string, numbers and literals.
+raw 2 '{"cwd":"'"$onfeat"'","note":"}{\"][,","n":1.5,"b":false,"z":null,"e":{},"a":[],"tool_input":{"command":"git push origin main"}}'
+# A command anywhere but tool_input is no command: refused only when it mentions a guarded word.
+raw 2 '{"command":"git push origin main"}'
+raw 0 '{"command":"ls -la"}'
+raw 0 '{"tool_input":"ls -la"}'
+raw 2 '{"tool_input":"git push origin main"}'
+raw 2 '{"tool_input":{"options":{"command":"git push origin main"}}}'
+raw 0 '{}'
+# These must be read: the command mentions a push, so input the hook cannot read would be refused.
+ok='"tool_input":{"command":"echo push"}'
+raw 0 '{"list":[1,{"command":"ls"},[true]],'"$ok"'}'
+raw 0 '{"note":"}{\"][,","n":1.5,"b":false,"z":null,"e":{},"a":[],'"$ok"'}'
+raw 0 '{"note":"C:\\","other":"a\\\"b",'"$ok"'}'
+raw 0 '{"x":"tool_input","y":"command",'"$ok"'}'
+raw 0 '{
+  "meta": {
+    "command": "git tag v1"
+  },
+  "list": [
+    1,
+    "two"
+  ],
+  "tool_input": {
+    "command": "echo push"
+  }
+}'
+raw 0 '{"a" : 1 , "tool_input" : { "b" : 2 , "command" : "echo push" } }'
+tab=$(printf '\t') cr=$(printf '\r')
+raw 0 "{$cr
+$tab\"a\"$tab:${tab}1$tab,$cr
+$tab\"tool_input\":{\"command\":\"echo push\"}$cr
+}"
+# A repeated key is read as a JSON parser reads it: the last one.
+raw 2 '{"cwd":"'"$onfeat"'","tool_input":{"command":"ls","command":"git push origin main"}}'
+grep -q 'reaches main' "$tmp/err" || fail "the repeated key was refused for another reason: $(cat "$tmp/err")"
+raw 2 '{"cwd":"'"$onfeat"'","tool_input":{"command":"ls"},"tool_input":{"command":"git push origin main"}}'
+grep -q 'reaches main' "$tmp/err" || fail "the repeated object was refused for another reason: $(cat "$tmp/err")"
+raw 0 '{"cwd":"'"$onfeat"'","tool_input":{"command":"git push origin main","command":"echo push"}}'
+# A key is compared whole: one that only starts with a name the hook reads is another key.
+raw 0 '{"tool_input":{"command":"echo push","command:x":1}}'
+raw 2 '{"cwd":"'"$onfeat"'","tool_input":{"command":"git ship","command:x":1}}'
+grep -q 'reaches main' "$tmp/err" || fail "the key with a colon was refused for another reason: $(cat "$tmp/err")"
+raw 2 '{"cwd":"'"$onmain"'","cwd:x":1,"tool_input":{"command":"git push"}}'
+grep -q 'pushes main' "$tmp/err" || fail "the cwd with a colon was refused for another reason: $(cat "$tmp/err")"
+# The last of a repeated key counts for all three, and a value that is no string clears it.
+raw 2 '{"tool_input":{"command":"echo push","command":null}}'
+raw 2 '{"tool_input":{"command":"echo push"},"tool_input":"x"}'
+raw 2 '{"cwd":"'"$onfeat"'","cwd":"'"$onmain"'","tool_input":{"command":"git push"}}'
+grep -q 'pushes main' "$tmp/err" || fail "the repeated cwd was refused for another reason: $(cat "$tmp/err")"
+raw 0 '{"cwd":"'"$onfeat"'","tool_name":"Bash","tool_name":"PowerShell","tool_input":{"command":"echo `git tag v2`"}}'
+# A \u escape in a key can spell tool_input, and in a value a guarded word.
+raw 2 '{"tool\u005finput":{"command":"git \u0070ush origin main"}}'
+raw 2 '{"tool_input":{"command":"ls"},"tool_\u0069nput":{"command":"git ship"}}'
+raw 2 '{"tool\u005finput":{"command":"ls"}}'
 # A \u escape the hook would read as a space is part of a word to the shell, so a # after it is no
 # comment, and escapes can spell a guarded word: any escape but & < > ' is refused.
 refused 'echo\u001f#; git push origin main'
