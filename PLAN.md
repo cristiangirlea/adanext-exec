@@ -76,6 +76,8 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-09: The push guard reads `tool_input.command`, `cwd` and `tool_name` by their place in
+  the hook's JSON, not as the first key of that name anywhere in it (PR #64, #23).
 - 2026-11-07: M7 and M8 run commands through the `adanext-exec run` binary, never through an
   import of the broker (the owner's choice). This replaces the M0 plan (2026-10-14) that
   harness and adad import the SDK. The binary always sets a policy and an audit, where the

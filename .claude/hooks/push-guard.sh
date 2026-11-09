@@ -43,31 +43,89 @@ prog() {
   w=${lc%.exe}
 }
 
-# json_string KEY: sets val to the still-escaped string value of "KEY": in the input, or fails.
-# The value ends at the first quote that an odd run of backslashes does not escape.
-json_string() {
-  rest=$input
+# json_read: t starts just after a string's opening quote. Takes the string off t and sets val to
+# it, still escaped. It ends at the first quote that an odd run of backslashes does not escape.
+json_read() {
+  val=
   while :; do
-    case $rest in *"\"$1\""*) ;; *) return 1 ;; esac
-    rest=${rest#*"\"$1\""}
-    t=${rest#"${rest%%[![:space:]]*}"}
-    case $t in :*) ;; *) continue ;; esac # the key's name was a value: look further
-    t=${t#:}
+    case $t in *'"'*) ;; *) return 1 ;; esac
+    head=${t%%\"*}
+    t=${t#*\"}
+    h=$head
+    while :; do case $h in *'\\') h=${h%??} ;; *) break ;; esac; done
+    case $h in
+      *'\') val=$val$head'"' ;;
+      *) val=$val$head; return 0 ;;
+    esac
+  done
+}
+# json_skip: takes one value of any kind off the front of t.
+json_skip() {
+  jd=0
+  while :; do
+    jp=${t%%[\"\{\}\[\],]*}
+    t=${t#"$jp"}
+    case $t in
+      '"'*) t=${t#\"}; json_read || return 1 ;;
+      [\{\[]*) t=${t#?} jd=$((jd + 1)); continue ;;
+      [\}\]]*) [ "$jd" -gt 0 ] || return 0; t=${t#?} jd=$((jd - 1)) ;;
+      ,*) [ "$jd" -gt 0 ] || return 0; t=${t#,}; continue ;;
+      *) return 1 ;;
+    esac
+    [ "$jd" -gt 0 ] || return 0
+  done
+}
+# json_object FUNC: t is just inside an object. Takes the rest of it off t, calling FUNC KEY with t
+# at each value; FUNC takes the value off. A \u escape in a key can spell any name: such a key fails.
+json_object() {
+  while :; do
     t=${t#"${t%%[![:space:]]*}"}
     case $t in '"'*) t=${t#\"} ;; *) return 1 ;; esac
-    val=
-    while :; do
-      case $t in *'"'*) ;; *) return 1 ;; esac
-      head=${t%%\"*}
-      t=${t#*\"}
-      h=$head
-      while :; do case $h in *'\\') h=${h%??} ;; *) break ;; esac; done
-      case $h in
-        *'\') val=$val$head'"' ;;
-        *) val=$val$head; return 0 ;;
-      esac
-    done
+    json_read || return 1
+    case $val in *'\u'*) return 1 ;; esac
+    t=${t#"${t%%[![:space:]]*}"}
+    case $t in :*) t=${t#:} ;; *) return 1 ;; esac
+    t=${t#"${t%%[![:space:]]*}"}
+    "$1" "$val" || return 1
+    t=${t#"${t%%[![:space:]]*}"}
+    case $t in
+      ,*) t=${t#,} ;;
+      '}'*) t=${t#?}; return 0 ;;
+      *) return 1 ;;
+    esac
   done
+}
+# json_top KEY, json_tool KEY: FUNCs for the input's own keys and for those of its tool_input. A
+# key that repeats replaces the earlier one, as in a JSON parser.
+json_top() {
+  case $1 in
+    tool_input)
+      jread= jcmd=
+      case $t in '{'*) t=${t#\{}; json_object json_tool ;; *) json_skip ;; esac ;;
+    cwd) json_text && jcwd=$val ;;
+    tool_name) json_text && jtool=$val ;;
+    *) json_skip ;;
+  esac
+}
+json_tool() {
+  case $1 in
+    command)
+      jread= jcmd=
+      case $t in '"'*) t=${t#\"}; json_read && jread=1 jcmd=$val ;; *) json_skip ;; esac ;;
+    *) json_skip ;;
+  esac
+}
+# json_text: takes one value off t; sets val to it if it is a string, and to nothing if not.
+json_text() {
+  case $t in '"'*) t=${t#\"}; json_read ;; *) val=; json_skip ;; esac
+}
+# json_load: one pass over the input, as each read of a long command costs seconds. Sets jcmd, jcwd
+# and jtool to their still-escaped strings; fails unless the input is read and has a command.
+json_load() {
+  jread= jcmd= jcwd= jtool=
+  t=${input#"${input%%[![:space:]]*}"}
+  case $t in '{'*) t=${t#\{} ;; *) return 1 ;; esac
+  json_object json_top && [ -n "$jread" ]
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
 # cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
@@ -584,11 +642,12 @@ check_api() {
 
 main() {
   depth=0 fromstdin=0 gopts=
-  if ! json_string command; then
+  if [ -z "$loaded" ]; then
+    case $input in *'\u'*) refuse "the hook could not read this command, and a \\u escape can spell anything" ;; esac
     mentions "$input" && refuse "the hook could not read this command, and it mentions a push, a tag, a release, a merge or the API"
     exit 0
   fi
-  cmd=$val
+  cmd=$jcmd
   # The decoding below must give back what the shell will see. It reads a \u escape other than
   # & < > ' as a space, and a backspace or form feed too, while the shell keeps the character in a
   # word: a # after it is no comment, and escapes can spell a guarded word. Bash also keeps a CR in
@@ -598,9 +657,8 @@ main() {
   # would decode as a backslash: refuse it too.
   case $input in *"$soh"*) refuse "the input holds a raw control character" ;; esac
   use_lang sh
-  json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
-  cwd=
-  json_string cwd && cwd=$val
+  [ "$jtool" = PowerShell ] && use_lang ps
+  cwd=$jcwd
   case $cmd$cwd in
     *\\*)
       rest=$(printf '%s' "$cmd" | sed -e 's/\\\\//g' -e 's/\\u0026//g' -e 's/\\u0027//g' -e 's/\\u003[cCeE]//g')
@@ -626,8 +684,10 @@ main() {
 
 # Nothing guarded can run without one of these words: the common path ends here, before any other
 # process starts.
-if json_string command; then
-  case $val in
+loaded=
+if json_load; then
+  loaded=1
+  case $jcmd in
     *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \
       *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
     *) exit 0 ;;
