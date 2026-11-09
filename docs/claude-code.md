@@ -76,7 +76,8 @@ PowerShell 5.1.
 3. **The rewrite.** The command becomes the binary itself running
    `run --hook-build V --shell bash|pwsh|powershell --script-b64 TEXT`, which no shell
    reparses. When you are asked, the reason shows the original command, since what you
-   approve is the rewrite.
+   approve is the rewrite. A call that sets a `timeout` keeps it: the gate kills the command's
+   tree at that time, unless the call runs in the background.
 4. **`run`** judges the command again and runs it with its limits. It refuses (exit 126)
    when it is not the build that wrote the rewrite, for example after an upgrade between the
    two. A build is a hash of the binary's own file, so any change to the binary counts.

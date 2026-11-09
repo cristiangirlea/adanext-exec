@@ -145,7 +145,7 @@ The rewrite keeps every other field of `tool_input` and replaces `command` with 
 itself (its own path) running the text through `run`:
 
 ```
-'<binary>' 'run' '--hook-build' '<build>' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE']
+'<binary>' 'run' '--hook-build' '<build>' '--shell' 'bash' ['--policy' 'FILE' | '--profile' 'NAME'] ['--approved=RULE'] ['--timeout' 'D']
   '--agent' 'claude-code' ['--session' '<session_id>'] '--script-b64' '<text>'
 & '<binary>' 'run' '--hook-build' '<build>' '--shell' 'pwsh' ...
 ```
@@ -154,8 +154,13 @@ Each word is single-quoted for the tool's shell (Bash, or PowerShell after its c
 and the text is base64 without `+`, `/` or `=`, so neither shell, nor Git Bash's path
 conversion, changes it. `run` judges the command again and runs it.
 
+A call that sets `tool_input.timeout` (milliseconds) gets it as `--timeout`, so `run` kills the
+command's tree at that time, which Claude Code's tool does not: it moves the command to the
+background. A call with `run_in_background` true gets no `--timeout`, since it is meant to outlive
+its call.
+
 **It denies what it cannot judge**: input that is not valid JSON or is larger than 1 MiB,
-another event, no tool, a `tool_input` that is not an object or has no command string, a policy
+another event, no tool, a `tool_input` that is not an object or has no command string, a `timeout` that is not a positive number, a policy
 or a Claude Code settings file that cannot be used, unknown arguments, a binary running elevated, a `session_id` other than
 1 to 128 letters, digits and `. _ : -` (Windows PowerShell would let its quotes reach `run`'s
 own parser), and a command that contains `-approved` or `-script-b64` (only the rewrite

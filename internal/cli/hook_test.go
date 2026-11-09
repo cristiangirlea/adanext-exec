@@ -143,7 +143,7 @@ func TestTheHookRewriteRunsTheExactText(t *testing.T) {
 		}{{"allow", named, "", ""}, {"ask", named, tl.mark, "say-hi"}, {"default ask", byDefault, "", ""}} {
 			script := tc.mark + tl.script
 			decision := strings.Fields(tc.name)[len(strings.Fields(tc.name))-1]
-			in := map[string]any{"command": script, "description": "d", "timeout": 5000, "run_in_background": false}
+			in := map[string]any{"command": script, "description": "d", "timeout": 120000, "run_in_background": false}
 			code, d, stderr := hookMain(t, hookRequest(t, tl.name, in), "claude-code", "--policy", tc.policy)
 			if code != 0 || d == nil || d.Decision != decision {
 				t.Fatalf("%s %s %s: code %d, answer %+v, stderr %q", tl.name, tl.shell, tc.name, code, d, stderr)
@@ -151,12 +151,15 @@ func TestTheHookRewriteRunsTheExactText(t *testing.T) {
 			if tc.rule != "" && !strings.Contains(d.Reason, tc.rule) || decision == "ask" && !strings.Contains(d.Reason, script) {
 				t.Errorf("%s %s: reason %q, want the rule and the command", tl.name, tc.name, d.Reason)
 			}
-			if string(d.Input["description"]) != `"d"` || string(d.Input["timeout"]) != "5000" || string(d.Input["run_in_background"]) != "false" || len(d.Input) != 4 {
+			if string(d.Input["description"]) != `"d"` || string(d.Input["timeout"]) != "120000" || string(d.Input["run_in_background"]) != "false" || len(d.Input) != 4 {
 				t.Errorf("%s: updatedInput %v, want the other fields kept", tl.name, d.Input)
 			}
 			var rewrite string
 			if err := json.Unmarshal(d.Input["command"], &rewrite); err != nil {
 				t.Fatal(err)
+			}
+			if !strings.Contains(rewrite, "'--timeout' '2m0s'") {
+				t.Errorf("%s %s: the rewrite %q lost the timeout", tl.name, tc.name, rewrite)
 			}
 			if !strings.Contains(rewrite, "'--shell' '"+string(tl.shell)+"'") || tc.mark != "" && strings.Contains(rewrite, tc.mark) || strings.Contains(rewrite, "Write-Output") || strings.Contains(rewrite, "printf") {
 				t.Errorf("%s: the rewrite %q runs another shell, or carries the text where a shell reads it", tl.name, rewrite)

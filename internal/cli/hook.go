@@ -8,12 +8,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cristiangirlea/adanext-exec/broker"
 	"github.com/cristiangirlea/adanext-exec/internal/claudecode"
@@ -132,6 +134,10 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return deny(fmt.Sprintf("the command passes %s itself; only the hook's rewrite carries it", f))
 		}
 	}
+	timeout, err := hookTimeout(input)
+	if err != nil {
+		return deny(err.Error())
+	}
 	if in.Session != "" && !sessionID.MatchString(in.Session) {
 		return deny("the session id is not letters, digits and . _ : -")
 	}
@@ -200,6 +206,9 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// One word even for the default's empty rule: Windows PowerShell drops an empty argument.
 		argv = append(argv, "--approved="+v.Rule)
 	}
+	if timeout > 0 {
+		argv = append(argv, "--timeout", timeout.String())
+	}
 	argv = append(argv, "--agent", "claude-code")
 	if in.Session != "" {
 		argv = append(argv, "--session", in.Session)
@@ -211,6 +220,25 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	input["command"] = rewrite
 	return hookAnswer(stdout, stderr, answer)
+}
+
+// hookTimeout is the call's own timeout, in the milliseconds the tool takes, for the rewrite. At that
+// time Claude Code moves a command to the background and leaves it running, so the gate must end
+// it. A call already in the background has none: it is meant to outlive its call.
+func hookTimeout(input map[string]json.RawMessage) (time.Duration, error) {
+	raw, set := input["timeout"]
+	if !set || string(raw) == "null" {
+		return 0, nil
+	}
+	var ms float64
+	if err := json.Unmarshal(raw, &ms); err != nil || ms <= 0 || math.Ceil(ms) > float64(math.MaxInt64/int64(time.Millisecond)) {
+		return 0, errors.New("the tool input's timeout is not a positive number of milliseconds")
+	}
+	var background bool
+	if json.Unmarshal(input["run_in_background"], &background) == nil && background {
+		return 0, nil
+	}
+	return time.Duration(math.Ceil(ms)) * time.Millisecond, nil
 }
 
 // readHookInput reads and checks Claude Code's input: one JSON object for a PreToolUse event.

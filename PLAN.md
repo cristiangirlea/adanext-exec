@@ -76,6 +76,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-09: The hook carries a call's `timeout` into the rewrite as `--timeout`, so the gate
+  ends the command's tree where Claude Code's tool would only move it to the background; a
+  background call gets none (PR #68, #67).
 - 2026-11-09: The push guard joins sh's backslash-newline in its parser, at the top level, in
   double quotes and in unquoted heredocs, and keeps it elsewhere (PR #66, #25).
 - 2026-11-09: The push guard keeps a tab inside quotes and splits on one outside them; a heredoc's
