@@ -231,7 +231,7 @@ func hookTimeout(input map[string]json.RawMessage) (time.Duration, error) {
 		return 0, nil
 	}
 	var ms float64
-	if err := json.Unmarshal(raw, &ms); err != nil || ms <= 0 || ms*float64(time.Millisecond) >= math.MaxInt64 {
+	if err := json.Unmarshal(raw, &ms); err != nil || ms <= 0 || math.Ceil(ms) > float64(math.MaxInt64/int64(time.Millisecond)) {
 		return 0, errors.New("the tool input's timeout is not a positive number of milliseconds")
 	}
 	var background bool

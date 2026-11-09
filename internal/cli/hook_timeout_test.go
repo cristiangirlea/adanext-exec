@@ -27,7 +27,7 @@ func TestTheRewriteCarriesTheCallsTimeoutOnBothTools(t *testing.T) {
 		for _, tc := range []struct {
 			timeout any
 			want    string
-		}{{5000, "'--timeout' '5s'"}, {1500, "'--timeout' '1.5s'"}, {0.5, "'--timeout' '1ms'"}} {
+		}{{5000, "'--timeout' '5s'"}, {1500, "'--timeout' '1.5s'"}, {0.5, "'--timeout' '1ms'"}, {9223372036854, "'--timeout' '2562047h47m16.854s'"}} {
 			got := hookRewrite(t, tool, map[string]any{"command": "echo hi", "timeout": tc.timeout})
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("%s timeout %v: the rewrite %q lacks %s", tool, tc.timeout, got, tc.want)
@@ -47,17 +47,23 @@ func TestTheRewriteHasNoTimeoutWhenTheCallSetsNoneOrRunsInTheBackground(t *testi
 			t.Errorf("%s: the rewrite %q has a timeout", name, got)
 		}
 	}
-	if got := hookRewrite(t, "Bash", map[string]any{"command": "echo hi", "timeout": 5000, "run_in_background": false}); !strings.Contains(got, "'--timeout'") {
-		t.Errorf("a foreground call lost its timeout: %q", got)
+	for _, background := range []any{false, nil, "true", 1} {
+		got := hookRewrite(t, "Bash", map[string]any{"command": "echo hi", "timeout": 5000, "run_in_background": background})
+		if !strings.Contains(got, "'--timeout'") {
+			t.Errorf("run_in_background %v lost the timeout: %q", background, got)
+		}
 	}
 }
 
 func TestTheHookDeniesATimeoutItCannotUse(t *testing.T) {
 	setup(t)
-	for _, timeout := range []any{0, -1, "5000", true, 1e300, map[string]any{}} {
-		code, d, _ := hookMain(t, hookRequest(t, "Bash", map[string]any{"command": "echo hi", "timeout": timeout}), "claude-code")
-		if code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, "timeout") || d.Input != nil {
-			t.Errorf("timeout %v: code %d, answer %+v; want a deny naming the timeout", timeout, code, d)
+	for _, timeout := range []any{0, -1, "5000", true, 1e300, 9223372036854.5, map[string]any{}} {
+		for _, background := range []bool{false, true} {
+			in := map[string]any{"command": "echo hi", "timeout": timeout, "run_in_background": background}
+			code, d, _ := hookMain(t, hookRequest(t, "Bash", in), "claude-code")
+			if code != 0 || d == nil || d.Decision != "deny" || !strings.Contains(d.Reason, "timeout") || d.Input != nil {
+				t.Errorf("timeout %v background %v: code %d, answer %+v; want a deny naming the timeout", timeout, background, code, d)
+			}
 		}
 	}
 }
