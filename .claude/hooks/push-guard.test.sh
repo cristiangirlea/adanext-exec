@@ -24,7 +24,9 @@ g -C "$tmp/onfeat" checkout -q -b my-branch && g -C "$tmp/onfeat" tag v1.0 &&
   g -C "$tmp/onfeat" update-ref refs/remotes/origin/old-feature HEAD &&
   g -C "$tmp/onfeat" config alias.st status &&
   g -C "$tmp/onfeat" config alias.ship "push origin main" &&
-  g -C "$tmp/onfeat" config alias.yolo "!git push --force origin my-branch" || fail "setting up onfeat failed"
+  g -C "$tmp/onfeat" config alias.yolo "!git push --force origin my-branch" &&
+  g -C "$tmp/onfeat" config alias.split '!git pu\
+sh origin main' || fail "setting up onfeat failed"
 g -C "$tmp/upmain" checkout -q -b feat && g -C "$tmp/upmain" update-ref refs/remotes/origin/main HEAD &&
   g -C "$tmp/upmain" config branch.feat.remote origin &&
   g -C "$tmp/upmain" config branch.feat.merge refs/heads/main &&
@@ -177,6 +179,73 @@ refused 'git status | git push origin main'
 refused 'git status\ngit push origin main'
 refused 'git status\r\ngit tag v2'
 refused 'git push origin \\\nmain'
+# A backslash before a newline is removed in sh at the top level and in double quotes, so it joins
+# the halves of a word.
+refused 'git pu\\\nsh origin main'
+refused 'gi\\\nt push origin main'
+refused 'gi\\\nt pu\\\nsh origin main'
+refused 'git push origin ma\\\nin'
+refused 'git push origin \"ma\\\nin\"'
+refused 'git status \\\n; git push origin main'
+refused 'echo $(git pu\\\nsh origin main)'
+refused 'echo \"$\\\n(git push origin main)\"'
+refused "bash -c 'git pu\\\\\\nsh origin main'"
+# An even run of backslashes does not join, and a comment ends at its newline whatever precedes it.
+refused 'echo a\\\\\ngit push origin main'
+refused 'git status # a\\\ngit push origin main'
+allowed 'git status # a\\\ngit status'
+# The joined text is what counts: a # in the middle of a word is no comment.
+refused 'echo x\\\n#y; git push origin main'
+allowed 'git status \\\n# ; git push origin main'
+# In single quotes both stay.
+allowed "git push origin 'ma\\\\\\nin'"
+allowed "echo 'a\\\\\\nb; git push origin main'"
+# A quoted heredoc keeps them, so the line after one can end it; an unquoted heredoc joins.
+refused "cat <<'EOF'\\nfoo\\\\\\nEOF\\ngit push origin main"
+refused 'cat <<\"EOF\"\nfoo\\\nEOF\ngit push origin main'
+allowed 'cat <<EOF\nfoo\\\nEOF\ngit push origin main\nEOF\ngit status'
+refused 'cat <<EOF\nfoo\\\\\nEOF\ngit push origin main'
+refused 'cat <<EOF\n$(git pu\\\nsh origin main)\nEOF'
+refused 'cat <<EOF\n$\\\n(git push origin main)\nEOF'
+allowed "cat <<'EOF'\\n\$\\\\\\n(git push origin main)\\nEOF"
+# The operator and the word can be split too.
+refused 'cat <<E\\\nOF\nx\nEOF\ngit push origin main'
+allowed 'cat <<E\\\nOF\ngit push origin main\nEOF\ngit status'
+refused 'cat <<\"E\\\nOF\"\nx\nEOF\ngit push origin main'
+allowed 'cat <\\\n<EOF\ngit push origin main\nEOF\ngit status'
+refused "cat <\\\\\\n<EOF\\n'\\nEOF\\ngit push origin main"
+allowed 'cat <<\\\nEOF\ngit tag v1\nEOF\ngit status'
+allowed 'cat <<-\\\nEOF\ngit tag v1\nEOF\ngit status'
+allowed 'cat << \\\nEOF\ngit tag v1\nEOF\ngit status'
+# bash ends a heredoc at a word split by a join, and dash reads on: the hook refuses to guess.
+refused 'cat <<EOF\nx\nE\\\nOF\ngit status'
+refused "cat <<EOF\\nE\\\\\\nOF\\n'\\nEOF\\ngit push origin main"
+allowed 'cat <<-EOF\n\tfoo\\\n\tEOF\ngit push origin main\n\tEOF\ngit status'
+# Backticks, eval, aliases, arithmetic and a nested shell.
+refused 'echo `git pu\\\nsh origin main`'
+refused 'echo `git pu\\\\\nsh origin main`'
+refused 'echo `git status\\\\\\\ngit push origin main`'
+refused 'echo `git status\\\\\\\\\ngit push origin main`'
+refused 'echo `echo $(git pu\\\\\nsh origin main)`'
+grep -q 'inside backticks' "$tmp/err" || fail "the nested join was refused for another reason: $(cat "$tmp/err")"
+allowed 'echo `git status \\\n--short`'
+refused "echo \`bash -c 'git pu\\\\\\\\\\nsh origin main'\`"
+grep -q 'inside backticks' "$tmp/err" || fail "the join in single quotes was refused for another reason: $(cat "$tmp/err")"
+refused 'cat <<EOF\n`git pu\\\\\\\nsh origin main`\nEOF'
+grep -q 'inside backticks' "$tmp/err" || fail "the run in a heredoc body was refused for another reason: $(cat "$tmp/err")"
+allowed 'cat <<EOF\n`date` x\\\ny\nEOF'
+refused 'echo `cat <<E\\\\\nOF\nx\nEOF\ngit push origin main`'
+grep -q 'inside backticks' "$tmp/err" || fail "the join in a heredoc word was refused for another reason: $(cat "$tmp/err")"
+refused "eval 'git pu\\\\\\nsh origin main'"
+refused 'git split'
+refused 'echo $(\\\n(1<<x))\ngit push origin main'
+refused 'cat <\\\n<\\\n<x\ngit push origin main'
+refused "powershell -Command 'git status\\\\\\ngit push origin main'"
+# Input the hook cannot read is refused when it holds a line join, which can spell a guarded word.
+raw 2 '{"tool_input":{"command":"gi\\\nt pu\\\nsh origin main"}'
+# PowerShell has no such join: a backslash is an ordinary character, and the newline ends the line.
+refused 'git status \\\ngit push origin main' . PowerShell
+allowed 'echo a\\\nb' . PowerShell
 refused 'git push origin `\r\nmain' . PowerShell
 refused 'GIT_TRACE=1 git push origin main'
 refused 'env GIT_TRACE=1 git push origin main'
@@ -455,6 +524,12 @@ printf '{"cwd":"%s","tool_name":"Bash","tool_input":{"command":"git push origin 
 # The shell may add its own line for the signal, so only the exit and the reason are checked.
 [ $? -eq 2 ] && grep -q 'the hook failed' "$tmp/err" ||
   fail "git push under a git that kills the hook: not refused as a failure: $(cat "$tmp/err")"
+# The same when only a line join makes the command a push: the raw text mentions none.
+n=$((n + 1))
+printf '%s' '{"cwd":"'"$onfeat"'","tool_name":"Bash","tool_input":{"command":"gi\\\nt pu\\\nsh origin my-branch"}}' |
+  PATH="$tmp/shim:$PATH" sh "$hook" 2>"$tmp/err"
+[ $? -eq 2 ] && grep -q 'the hook failed' "$tmp/err" ||
+  fail "a joined git push under a git that kills the hook: not refused as a failure: $(cat "$tmp/err")"
 # A Windows cwd, backslashes JSON-escaped, as Claude Code sends it on Windows.
 if command -v cygpath >/dev/null 2>&1; then
   winmain=$(cygpath -w "$onmain" | sed 's/\\/\\\\/g')
