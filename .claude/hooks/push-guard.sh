@@ -130,11 +130,12 @@ json_load() {
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
 # cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
 # PowerShell line continuations); other newlines stay. CRLF and a lone CR are newlines (PowerShell
-# ends a line at a CR). Control characters: spaces.
+# ends a line at a CR). A tab stays a tab: in quotes it is part of the word. Other control
+# characters: spaces.
 unescape() {
   sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r\\n/\\n/g' -e 's/\\r/\\n/g' \
     -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
-    -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
+    -e 's/\\t/	/g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
 }
@@ -268,15 +269,35 @@ heredoc_start() {
   case $cs in -*) hd=- cs=${cs#-} cur=$cur- ;; esac
   hb=${cs%%[!\ \	]*}
   cs=${cs#"$hb"}
-  hw=${cs%%[\ \	\;\|\&\<\>\(\)$nl]*}
-  cs=${cs#"$hw"} cur=$cur$hb$hw hq=u
+  # The word ends at a blank or an operator outside quotes, and loses one level of quotes.
+  hr=$cs hw= hq=u
   while :; do
-    case $hw in *[\'\"\\]*) hq=q hw=${hw%%[\'\"\\]*}${hw#*[\'\"\\]} ;; *) break ;; esac
+    hp=${hr%%[\'\"\\\ \	\;\|\&\<\>\(\)$nl]*}
+    hw=$hw$hp hr=${hr#"$hp"}
+    case $hr in
+      \'*) hr=${hr#?} hp=${hr%%\'*} hw=$hw$hp hr=${hr#"$hp"} hr=${hr#\'} hq=q ;;
+      \"*)
+        hr=${hr#?} hq=q
+        while :; do
+          hp=${hr%%[\"\\]*} hw=$hw$hp hr=${hr#"$hp"}
+          case $hr in
+            \\*)
+              hr=${hr#?} hc=${hr%"${hr#?}"} hr=${hr#?}
+              case $hc in [\"\\\$\`]) hw=$hw$hc ;; *) hw=$hw\\$hc ;; esac ;;
+            *) hr=${hr#\"}; break ;;
+          esac
+        done ;;
+      \\*) hr=${hr#?} hw=$hw${hr%"${hr#?}"} hr=${hr#?} hq=q ;;
+      *) break ;;
+    esac
   done
+  cur=$cur$hb${cs%"$hr"} cs=$hr
+  # The queue is one word to a line, and shells differ on where such a heredoc ends.
+  case $hw in *"$nl"*) refuse "a heredoc's word holds a newline" ;; esac
   [ -z "$hw" ] || hdq=$hdq$hq$hd$hw$nl
 }
 # heredoc_skip: at a newline, takes the queued heredocs' bodies off the text. <<- ends at the word
-# after blanks: a JSON tab arrives as a space.
+# after tabs.
 heredoc_skip() {
   while [ -n "$hdq" ]; do
     he=${hdq%%"$nl"*} hdq=${hdq#*"$nl"}
@@ -285,7 +306,7 @@ heredoc_skip() {
     hbody=
     while [ -n "$cs" ]; do
       case $cs in *"$nl"*) hl=${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) hl=$cs cs= ;; esac
-      [ "$hd" = - ] && hl=${hl#"${hl%%[!\ \	]*}"}
+      [ "$hd" = - ] && hl=${hl#"${hl%%[!	]*}"}
       [ "$hl" = "$he" ] && break
       hbody=$hbody$hl$nl
     done

@@ -43,6 +43,21 @@ g clone -q "$onmain" "$detached" && g -C "$detached" checkout -q --detach || fai
 spaced="$tmp/with space"
 mkdir "$spaced" && g -C "$spaced" init -q && g -C "$spaced" checkout -q -b feat &&
   g -C "$spaced" commit -q --allow-empty -m init || fail "setting up spaced failed"
+# tabbed: on main, in a directory whose name has a tab. twin: on feat, the same name with a space.
+# Windows file names cannot hold a tab, so the cases that need them are skipped there.
+tabbed="$tmp/x	y" twin="$tmp/x y" tabjson="$tmp/x\\ty"
+if ! { mkdir "$tabbed" && g -C "$tabbed" init -q; } 2>/dev/null; then
+  case $(uname -s) in
+    MINGW* | MSYS* | CYGWIN*) tabbed= ;;
+    *) fail "setting up tabbed failed" ;;
+  esac
+else
+  g -C "$tabbed" checkout -q -b main &&
+    g -C "$tabbed" commit -q --allow-empty -m init &&
+    g -C "$tabbed" remote add origin https://example.invalid/r.git || fail "setting up tabbed failed"
+  mkdir "$twin" && g -C "$twin" init -q && g -C "$twin" checkout -q -b feat &&
+    g -C "$twin" commit -q --allow-empty -m init || fail "setting up twin failed"
+fi
 
 n=0
 # run WANT COMMAND [CWD [TOOL]]: COMMAND is already JSON-escaped.
@@ -275,6 +290,45 @@ allowed ''
 # A quoted path with a space is one word.
 allowed "cd \\\"$spaced\\\" && git push origin feat"
 allowed "git -C \\\"$spaced\\\" push origin feat"
+# A tab in quotes is part of the word, so this is not the directory with a space in that place.
+if [ -n "$tabbed" ]; then
+  refused "cd \\\"$tabjson\\\" && git push"
+  refused "git -C \\\"$tabjson\\\" push"
+  refused "cd '$tabjson' && git push"
+  allowed "cd \\\"$twin\\\" && git push"
+fi
+allowed 'git commit -m \"a\tb; git push origin main\"'
+# Outside quotes a tab ends a word, and a # after one starts a comment.
+refused 'git\tpush origin main'
+refused 'git push\torigin\tmain'
+refused 'git push origin main\t'
+refused '\tgit tag v1'
+allowed 'git push origin\tmy-branch'
+allowed 'git status\t# ; git push origin main'
+refused 'Start-Process git -ArgumentList \"push\torigin\tmain\"' . PowerShell
+refused 'bash -c \"git\ttag\tv1.sh\"'
+refused 'bash -c \"git\tpush origin main\"'
+refused 'eval \"git\tpush origin main\"'
+# A heredoc's word ends at a blank outside quotes only, and what follows the body is read again.
+refused 'cat <<EOF\t>x\nbody\nEOF\ngit push origin main'
+refused 'cat <<\"a\tb\"\nx\na\tb\ngit push origin main'
+refused 'cat <<\"a b\"\nx\na b\ngit push origin main'
+refused "cat <<'a b'\\nx\\na b\\ngit push origin main"
+refused 'cat <<a\\ b\nx\na b\ngit push origin main'
+refused 'cat <<\"a\\\"b\"\nx\na\"b\ngit push origin main'
+refused 'cat <<\"a\nb\"\nX\na\nb\ngit push origin main'
+refused "cat <<'a\\nb'\\nX\\na\\nb\\ngit push origin main"
+refused 'git push origin main <<\"a'
+refused "git push origin main <<'a"
+refused 'git push origin main <<a\\'
+refused 'git push origin main <<\"a\\'
+allowed 'cat <<\"a\tb\"\ngit push origin main\na\tb\ngit status'
+allowed 'cat <<\"a b\"\ngit push origin main\na\ngit tag v1\na b\ngit status'
+# <<- takes off leading tabs only, so a line indented with a space does not end the heredoc.
+allowed 'cat <<-EOF\n  EOF\ngit push origin main\nEOF'
+allowed 'cat <<-EOF\n \tEOF\ngit push origin main\nEOF'
+refused 'cat <<-EOF\n\t\tEOF\ngit push origin main'
+refused 'cat <<\tEOF\nx\nEOF\ngit push origin main'
 
 # The input itself: pretty-printed JSON is read; input the hook cannot read is refused only when
 # it mentions a push, a tag, a release, a merge or the API.
