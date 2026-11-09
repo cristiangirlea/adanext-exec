@@ -224,23 +224,13 @@ check_cmd() {
           cs=${cs#?}
           continue
         fi
-        # Inside backticks the shell first halves a run of backslashes, and shells differ on what
-        # the rest of the run then does to a newline after it.
-        case $lang$ch$cs in
-          'sh\\'*)
-            case $soh$stk in
-              *"$soh"[OD]*)
-                br=${cs%%[!\\]*}
-                case ${cs#"$br"} in "$nl"*) refuse "backslashes before a newline inside backticks cannot be read" ;; esac ;;
-            esac ;;
-        esac
         if [ "$ch" = "$esc" ]; then
           cur=$cur$ch${cs%"${cs#?}"} cs=${cs#?}
         elif [ "$ch$lang" = '`sh' ]; then
           case $md$stk in
             o[OD]*) check_part "$cur"; sub_end ;;
-            o*) cur="$cur \$"; sub_start O ;;
-            *) cur="$cur \$"; sub_start D ;;
+            o*) backtick_open; cur="$cur \$"; sub_start O ;;
+            *) backtick_open; cur="$cur \$"; sub_start D ;;
           esac
         else
           cur=$cur$ch
@@ -274,6 +264,11 @@ check_cmd() {
   check_part "$cur"
   while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
   return 0
+}
+# backtick_open: inside backticks the shell first halves every run of backslashes, even in single
+# quotes, and shells differ on what the rest does to a newline. Any such run after this point is refused.
+backtick_open() {
+  case $cs in *'\\'"$nl"*) refuse "backslashes before a newline inside backticks cannot be read" ;; esac
 }
 # skip_joins: in sh, takes any backslash and newline at the front of the text off it.
 skip_joins() {

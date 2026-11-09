@@ -229,6 +229,10 @@ refused 'echo `git status\\\\\\\\\ngit push origin main`'
 refused 'echo `echo $(git pu\\\\\nsh origin main)`'
 grep -q 'inside backticks' "$tmp/err" || fail "the nested join was refused for another reason: $(cat "$tmp/err")"
 allowed 'echo `git status \\\n--short`'
+refused "echo \`bash -c 'git pu\\\\\\\\\\nsh origin main'\`"
+grep -q 'inside backticks' "$tmp/err" || fail "the join in single quotes was refused for another reason: $(cat "$tmp/err")"
+refused 'echo `cat <<E\\\\\nOF\nx\nEOF\ngit push origin main`'
+grep -q 'inside backticks' "$tmp/err" || fail "the join in a heredoc word was refused for another reason: $(cat "$tmp/err")"
 refused "eval 'git pu\\\\\\nsh origin main'"
 refused 'git split'
 refused 'echo $(\\\n(1<<x))\ngit push origin main'
