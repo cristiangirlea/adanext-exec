@@ -317,8 +317,34 @@ most 28,000 bytes. The other lines it writes (a JSON value's keys and sample, th
 lines were left out) are held by those checks alone. Otherwise `Summarize` reports false, and
 the output passes as it would without shaping.
 
-`run --shape` and the originals directory come with M9b (#70), and reading an original back
-with M9c (#71).
+**Shaping a command's output (M9b, #70)** is `Command.Shape`, which `run --shape` sets. Both
+streams are held as one output, in the order written, and written to Stdout once the command
+has ended, so a command whose output must be seen live is run without it. An output of at most
+`Shape.Over` bytes (30,000, harness's bound, unless the caller says otherwise) passes as it is.
+A longer one is kept whole and replaced by its summary, or by its head and tail (two thirds and
+one third of `Over`, around a count of what was left out) when no summary keeps the
+invariants; a last line, `original: <handle> (<n> bytes)`, names the original. The audit line
+says a shaping happened and gives the handle and size, never the content.
+
+**The originals** live where the caller says, not in a directory of the gate's own, so an hrn
+run keeps every original in its record (`<run>/originals`) whichever agent ran the command, and
+hrn's own reader and its copying of originals into a continued run work on them unchanged. An
+original is `<dir>/<handle>.txt`, the handle being the first 16 hex characters of the SHA-256
+of its bytes, as harness names its own. The directory is made owner-only when missing (the
+originals hold whatever the commands printed, secrets included) and must be a plain directory,
+not a link; one that cannot be used leaves the command not run. Two caps bound the store, as
+harness's do: 64 MiB in the directory, and 1 GiB over it and every run's `originals` under a
+root the caller may name (`Shape.Root`, the directory holding one directory per run), a file
+linked into several runs counted once. A new original that would pass either is refused, never
+an old one evicted, since a handle already in a model's context must not dangle; the output is
+then cut as without shaping, and the result and the audit say why. An output past the smaller
+cap is not held at all, so memory stays bounded by it. Several `run` processes keep within the
+caps together: measuring and writing happen under an exclusive lock on a file in the root (or
+the directory), `.adanext-exec-originals.lock`, each original written to a temporary file and
+renamed into place. A writer that does not take the lock (hrn's own, for MCP results) is not
+held by it. Summarizing takes time after the command ends: about a second for every 6 MiB.
+
+Reading an original back comes with M9c (#71).
 
 ## How it controls processes, per platform
 

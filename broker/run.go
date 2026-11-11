@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/adanext-exec/internal/daemon"
+	"github.com/cristiangirlea/adanext-exec/internal/originals"
 	"github.com/cristiangirlea/adanext-exec/internal/tree"
 )
 
@@ -51,6 +52,15 @@ type Result struct {
 	// PeakMemory is the most memory the whole tree held at once, in bytes, where the platform
 	// reports it (committed memory on Windows); 0 when it does not.
 	PeakMemory int64
+	// Shaped is true when Command.Shape put a summary in place of the output.
+	Shaped bool
+	// Original is the handle of the output kept under Command.Shape's directory, and
+	// OriginalBytes its size; empty when none was kept.
+	Original      string
+	OriginalBytes int64
+	// OriginalRefused says why an output past Shape.Over was not kept: a cap would have been
+	// passed. Its head and tail were written instead, and OutputCut counts the rest.
+	OriginalRefused string
 }
 
 // outputGrace is how long Run waits, once the tree is dead, for an output pipe that stays
@@ -154,6 +164,12 @@ func Run(ctx context.Context, c Command) (Result, error) {
 			}
 		}
 	}
+	var store *originals.Store
+	var over int
+	if err == nil && c.Shape != nil {
+		// A directory that cannot hold the original leaves the command not run, before any slot.
+		store, over, err = c.Shape.open(c)
+	}
 	var waited time.Duration
 	runCtx := ctx
 	if err == nil && c.Slots != nil {
@@ -185,7 +201,11 @@ func Run(ctx context.Context, c Command) (Result, error) {
 		}
 	}
 	if err == nil {
-		res, ran, err = run(runCtx, c)
+		if store != nil {
+			res, ran, err = runShaped(runCtx, c, store, over)
+		} else {
+			res, ran, err = run(runCtx, c)
+		}
 		if ran {
 			// A command that did not run keeps its zero Result, as Run promises.
 			res.Waited = waited

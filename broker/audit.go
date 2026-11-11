@@ -145,7 +145,12 @@ type auditRecord struct {
 	Enforced   *bool    `json:"memory_enforced,omitempty"`
 	Hard       *bool    `json:"memory_hard,omitempty"` // held by the kernel, not only watched
 	PeakMemory int64    `json:"peak_memory,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	// What Shape did: a summary written, the original's handle and size, or why it was not kept.
+	Shaped          bool   `json:"shaped,omitempty"`
+	Original        string `json:"original,omitempty"`
+	OriginalBytes   int64  `json:"original_bytes,omitempty"`
+	OriginalRefused string `json:"original_refused,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // snapshot is what the audit reads of the caller's state, taken before the command starts.
@@ -166,6 +171,11 @@ func (c Command) record(snap snapshot, begin time.Time, verdict *Verdict, approv
 		OutputCut:  res.OutputCut,
 		QueueWait:  res.Waited.Milliseconds(),
 		PeakMemory: res.PeakMemory,
+
+		Shaped:          res.Shaped,
+		Original:        res.Original,
+		OriginalBytes:   res.OriginalBytes,
+		OriginalRefused: res.OriginalRefused,
 	}
 	for i, a := range c.Args {
 		if i > 0 && takesSecret(c.Args[i-1]) {

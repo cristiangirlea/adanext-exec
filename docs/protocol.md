@@ -26,7 +26,12 @@ exits.
 | `--approved RULE` | A person approved an ask under RULE. It counts only when the policy's own answer for the command is ask under that same rule. An empty RULE (`--approved=`) is an ask by the policy's default, which names no rule. |
 | `--audit-dir DIR` | The audit directory, instead of the user's state directory. |
 | `--timeout D` | Kill the command's tree after D (Go's duration syntax: `90s`, `5m`). |
-| `--output-cap N` | Bound each output stream to N bytes. |
+| `--output-cap N` | Bound each output stream to N bytes; with `--shape`, the size past which the one output is shaped. |
+| `--shape` | Hold standard output and standard error as one output, in the order written, until the command ends, then write it to standard output: as it is when it is at most `--output-cap` bytes (default 30000), otherwise with a checked summary or its head and tail in its place and the original kept (below). Needs `--originals`. |
+| `--originals DIR` | With `--shape`: the directory that keeps the originals. It is made, owner-only, when its parent exists; a link or anything but a directory there is refused (not run, 126). |
+| `--originals-root DIR` | With `--shape`: a directory with one directory per run, each with its originals in a directory named `originals`: those count together with `--originals` against `--originals-all-max`. |
+| `--originals-max SIZE` | With `--shape`: the cap on `--originals` (default `64M`). |
+| `--originals-all-max SIZE` | With `--shape`: the cap on `--originals` and the root's originals together (default `1G`). |
 | `--slots` | Wait for one of the daemon's heavy-command slots before the command starts, and hold it until the command ends. The wait is shown on standard error with its place in the queue. |
 | `--socket PATH` | The daemon's socket, instead of `<state dir>/adanext-exec/daemon/daemon.sock`; implies `--slots`. |
 | `--max-wait D` | With `--slots`: give up after waiting D for a slot. The wait counts toward no `--timeout`, which starts with the command. |
@@ -44,6 +49,24 @@ says why.
 **The audit is always written**, one line per command, also for one that did not run. A command
 whose line cannot be opened does not run.
 
+**Shaping (`--shape`).** An output past the threshold is kept whole as
+`<originals>/<handle>.txt`, the handle being the first 16 hex characters of the SHA-256 of its
+bytes (the same bytes give the same handle, and are kept once). What is written in its place is
+a summary that keeps every fact the checks of [design.md](design.md) hold it to, or, when no
+summary does, its first two thirds of the threshold and its last third around a line
+`[... N bytes cut ...]`; then a last line
+
+```
+original: <handle> (<n> bytes)
+```
+
+An original that would pass a cap is not kept, never an old one removed: the output is cut, with
+no such line, and standard error says why. Nothing is written while the command runs, so a
+command whose output must be seen as it comes (a server, a watch) is run without `--shape`.
+Summarizing a very large output takes time after the command ends, about a second for every 6
+MiB. The audit line says what was done (`shaped`, `original`, `original_bytes`,
+`original_refused`), never the output.
+
 **The binary refuses to run as root or as an elevated administrator** (exit 126). A token whose
 elevation cannot be read counts as elevated.
 
@@ -55,13 +78,13 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 
 | Code | Meaning |
 |---|---|
-| 120 | The command ran, but something after it failed: writing its output, writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
-| 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`. |
+| 120 | The command ran, but something after it failed: writing its output, keeping its original (other than a full cap), writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
+| 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`, `--shape` without `--originals`, or an `--originals` flag without `--shape`. |
 | 122 | The command and what it started went over `--memory` together, and the tree was stopped. |
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
-| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, `--hook-build` names another build, or `--memory-ceiling cgroup` (or the policy's) asked for a hard ceiling that cannot be held here. |
+| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, `--hook-build` names another build, `--memory-ceiling cgroup` (or the policy's) asked for a hard ceiling that cannot be held here, or `--originals` cannot be used. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
 | 128+n | The command was ended by signal n (Linux and macOS), as shells report it. |
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |

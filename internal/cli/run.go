@@ -39,6 +39,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	hookBuild := flags.String("hook-build", "", "the build of the hook that wrote this command line; run refuses another build's")
 	memory := flags.String("memory", "", "a ceiling on the memory of the command and all it starts: bytes, or with K, M or G")
 	memoryCeiling := flags.String("memory-ceiling", "", "how --memory is held on Linux: auto, cgroup (by the kernel, or the command is not run) or watchdog (default: the policy's, else auto)")
+	shape := flags.Bool("shape", false, "hold both streams as one output until the command ends, and put a checked summary in place of one past --output-cap bytes (default 30000), keeping the original in --originals")
+	originalsDir := flags.String("originals", "", "with --shape: the directory that keeps the originals, made when its parent exists")
+	originalsRoot := flags.String("originals-root", "", "with --shape: a directory of runs whose originals directories count together with --originals")
+	originalsMax := flags.String("originals-max", "", "with --shape: the cap on --originals, in bytes or with K, M or G (default 64M)")
+	originalsAllMax := flags.String("originals-all-max", "", "with --shape: the cap on --originals and the root's originals together (default 1G)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -77,10 +82,28 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return usageFail(stderr, "--memory: "+err.Error())
 	}
+	var shaping *broker.Shape
+	switch {
+	case *shape && *originalsDir == "":
+		return usageFail(stderr, "--shape needs --originals")
+	case !*shape && (*originalsDir != "" || *originalsRoot != "" || *originalsMax != "" || *originalsAllMax != ""):
+		return usageFail(stderr, "--originals, --originals-root, --originals-max and --originals-all-max need --shape")
+	case *shape:
+		shaping = &broker.Shape{Dir: *originalsDir, Root: *originalsRoot, Over: *outputCap}
+		if shaping.DirMax, err = parseSize(*originalsMax); err != nil {
+			return usageFail(stderr, "--originals-max: "+err.Error())
+		}
+		if shaping.AllMax, err = parseSize(*originalsAllMax); err != nil {
+			return usageFail(stderr, "--originals-all-max: "+err.Error())
+		}
+		// Under --shape the output cap is the threshold, and the size of a cut.
+		*outputCap = 0
+	}
 	c := broker.Command{
 		Stdin: stdin, Stdout: stdout, Stderr: stderr,
 		Timeout: *timeout, OutputCap: *outputCap, MemoryLimit: memoryLimit, MemoryCeiling: ceiling,
 		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
+		Shape:  shaping,
 	}
 	switch {
 	case *scriptB64 != "":
@@ -168,6 +191,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return ExitTimeout
 		}
 		return ExitCannotRun
+	}
+	if res.OriginalRefused != "" {
+		fmt.Fprintf(stderr, "adanext-exec: the original was not kept (%s); the output was cut\n", res.OriginalRefused)
 	}
 	if memoryLimit > 0 && !res.MemoryEnforced {
 		fmt.Fprintln(stderr, "adanext-exec: the memory ceiling is not enforced on this platform; the command ran without it")

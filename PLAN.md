@@ -75,9 +75,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   the original kept behind a handle; what harness#435's slice 6 needs. Done when M9a to M9c are.
   - [x] **M9a: the summarizer** (#1). harness's `internal/shape` at its commit `3b9d466`, with
     its adversarial, structured and fuzz tests, unchanged. Done: PR #72, 2026-11-11.
-  - [ ] **M9b: `run --shape` and the originals** (#70). The caller names the originals
+  - [x] **M9b: `run --shape` and the originals** (#70). The caller names the originals
     directory and its caps (64 MiB a directory, 1 GiB in all), refused rather than evicted; the
-    audit says a shaping happened and gives the handle.
+    audit says a shaping happened and gives the handle. Done: PR #73, 2026-11-11.
   - [ ] **M9c: reading an original** (#71). `adanext-exec original <handle> [--range a-b]`,
     bounded, which `run --shape` passes through neither shaped again nor cut; the hook carries
     `--shape`; a measurement on real outputs.
@@ -85,6 +85,18 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 ## Decisions log
 
 Newest first.
+
+- 2026-11-11: M9b (PR #73, #70). Shaping is `Command.Shape` in the SDK, so the audit line can say
+  what was done, and `run --shape --originals DIR` in the binary. #1's per-command opt-out and
+  global switch are the caller's: a command is shaped only when its caller asks, so hrn's own
+  setting is the switch and a command run without `--shape` the opt-out. Under it both streams
+  are one output written once the command ends, as harness's `run_command` returns combined
+  output, and `--output-cap` is the threshold (30,000 bytes, harness's). The caps measure as
+  harness's do; the "in all" cap counts the runs under a root the caller names, since the gate
+  has no list of runs. Writers in several processes keep within the caps through a lock file;
+  hrn's own writer does not take it. An original that cannot be kept for a reason other than a
+  cap (other bytes at its name, a directory that went) fails the command's result (exit 120),
+  since an output silently cut there would hide it.
 
 - 2026-11-11: M9 split into the summarizer (M9a), `run --shape` with the caller's originals
   directory (M9b, #70) and reading an original back (M9c, #71), one issue, branch and PR each;

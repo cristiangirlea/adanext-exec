@@ -80,6 +80,11 @@ type Command struct {
 	// Slots, when set, makes Run wait for one of the daemon's heavy-command slots before the
 	// command starts, and hold it until the command has ended. Nil shares no limits.
 	Slots *Slots
+
+	// Shape, when set, holds the output until the command has ended and puts a checked summary
+	// in place of a large one, keeping the original behind a handle (see Shape). Nil passes the
+	// output on as the command writes it.
+	Shape *Shape
 }
 
 // Shell names a shell that reads a Command's Script.
