@@ -71,20 +71,29 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 - [ ] **M8: AdaNext OS.** `adad` runs each task command through the `adanext-exec run` binary
   (`--slots` for the daemon's slots), each in a cgroup of its own where adad holds a delegated
   one; a small client module for that (`client/`, its own `go.mod`) comes when M8 starts.
-- [ ] **M9: output shaping** (#1). A large output replaced by a checked summary at the gate,
+- [x] **M9: output shaping** (#1). A large output replaced by a checked summary at the gate,
   the original kept behind a handle; what harness#435's slice 6 needs. Done when M9a to M9c are.
   - [x] **M9a: the summarizer** (#1). harness's `internal/shape` at its commit `3b9d466`, with
     its adversarial, structured and fuzz tests, unchanged. Done: PR #72, 2026-11-11.
   - [x] **M9b: `run --shape` and the originals** (#70). The caller names the originals
     directory and its caps (64 MiB a directory, 1 GiB in all), refused rather than evicted; the
     audit says a shaping happened and gives the handle. Done: PR #73, 2026-11-11.
-  - [ ] **M9c: reading an original** (#71). `adanext-exec original <handle> [--range a-b]`,
+  - [x] **M9c: reading an original** (#71). `adanext-exec original <handle> [--range a-b]`,
     bounded, which `run --shape` passes through neither shaped again nor cut; the hook carries
-    `--shape`; a measurement on real outputs.
+    `--shape`; a measurement on real outputs. Done: PR #74, 2026-11-11.
 
 ## Decisions log
 
 Newest first.
+
+- 2026-11-11: M9c (PR #74, #71), which completes M9. `run --shape` recognises a read of an
+  original only in its exact form, the bare program name included, and runs its own binary's
+  read in its place, so a program elsewhere in PATH named `adanext-exec`, or text around the
+  read, cannot borrow the unshaped, uncut pass; the read bounds itself at 1 MiB. A range's end
+  past the original reads to its end, so an agent can step through without knowing the size;
+  its start past the end is refused. harness's `read_original` also reads lines and JSON
+  pointers; the gate's reader takes byte ranges only, as #1 asked. The hook leaves a background
+  call unshaped, as its output is read while it runs.
 
 - 2026-11-11: M9b (PR #73, #70). Shaping is `Command.Shape` in the SDK, so the audit line can say
   what was done, and `run --shape --originals DIR` in the binary. #1's per-command opt-out and

@@ -351,7 +351,21 @@ temporary file and renamed into place. A writer that does not take the locks (hr
 MCP results) is not held by them. Summarizing happens after the command has ended, outside its
 timeout, and takes about a second for every 6 MiB.
 
-Reading an original back comes with M9c (#71).
+**Reading an original back (M9c, #71)** is `adanext-exec original <handle> [--range a-b]
+--originals DIR`: the whole original or bytes a to b, at most 1 MiB a read, so what an agent
+reads back stays below what its CLI shows, and only from a regular file directly in the
+directory, through the same checked handle as the writes. The original's line names the command
+with a first range of one threshold. An agent whose shell goes through the gate runs that
+command through `run --shape` too, where its output would be shaped again or cut, so the
+original could never be read whole: `run --shape` takes exactly that command (the bare program
+name, `original`, a handle, at most one range, nothing else) for this binary's own read, which
+it runs in place of whatever the name would find, unshaped and uncut. The exception cannot be
+borrowed by another program, nor by more text around the read, and what it prints is bounded by
+the read's own limit. The Claude Code hook carries `--shape` and the originals flags into every
+rewrite but a background call's, whose output is read as it comes.
+
+A measurement on real outputs, bytes in and out per kind, is in
+[shaping-measurement.md](shaping-measurement.md).
 
 ## How it controls processes, per platform
 

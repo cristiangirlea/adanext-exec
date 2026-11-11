@@ -57,8 +57,16 @@ summary does, its first two thirds of the threshold and its last third around a 
 `[... N bytes cut ...]`; then a last line
 
 ```
-original: <handle> (<n> bytes)
+original: <handle> (<n> bytes); adanext-exec original <handle> --range 0-<k> reads it, at most 1048576 bytes a read
 ```
+
+where `<k>` is the threshold, or `<n>` when that is smaller. The command it names, given exactly
+so (the bare name `adanext-exec` or `adanext-exec.exe`, `original`, the handle, and at most one
+`--range a-b` or `--range=a-b`, as shell text with nothing else, or as argv), is not run as
+written: `run --shape` runs this binary's own `original` for it, with `--originals`, and passes
+its output on as it is, neither shaped nor cut by the threshold. Anything else, a path to the
+program or another word included, is run and shaped as usual. So an agent whose shell goes
+through the gate reads an original whole, in ranges below its own output limit.
 
 An original that would pass a cap, or an output past 256 MiB, is not kept, never an old one
 removed: the output is cut, with no such line, and standard error says why. Nothing is written while the command runs, so a
@@ -90,6 +98,25 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
 
 The binary's own messages go to standard error.
+
+## `adanext-exec original`
+
+```
+adanext-exec original <handle> [--range a-b] --originals DIR
+```
+
+Prints the original `run --shape` kept as `<DIR>/<handle>.txt`, or bytes a to b of it,
+zero-based and end exclusive; an end past the original reads to its end. One read is at most
+1 MiB (1048576 bytes): a larger original, or range, is refused, and is read in ranges. The handle
+is 16 lowercase hex characters, and only a regular file directly in the directory is read,
+through a handle to the directory as its path named it, so no link is followed out of it.
+
+| Code | Meaning |
+|---|---|
+| 0 | The bytes are on standard output, as they are. |
+| 121 | Not a handle, not a range (`a-b`, a backward one, one that starts past the original, or one past the bound), a whole original past the bound, no handle, or no `--originals`. |
+| 126 | Nothing to read: no such original, not a regular file, or a directory that is not a plain one. |
+| 120 | Writing the bytes failed. |
 
 ## `adanext-exec check --json`
 
@@ -133,7 +160,9 @@ outcome but `-h` has its one answer line, a usage error included:
 ## `adanext-exec hook claude-code`
 
 ```
-adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
+adanext-exec hook claude-code [--policy FILE | --profile NAME]
+  [--shape --originals DIR [--originals-root DIR] [--originals-max SIZE] [--originals-all-max SIZE] [--output-cap N]]
+  < PreToolUse.json
 ```
 
 Claude Code's PreToolUse hook, the same on Windows, Linux and macOS. [claude-code.md](claude-code.md)
@@ -181,6 +210,11 @@ A call that sets `tool_input.timeout` (milliseconds) gets it as `--timeout`, so 
 command's tree at that time, which Claude Code's tool does not: it moves the command to the
 background. A call with `run_in_background` true gets no `--timeout`, since it is meant to outlive
 its call.
+
+With `--shape`, every rewrite carries `--shape` and the originals flags given to the hook (the
+paths made absolute), so `run` shapes the command's output as above; a call with
+`run_in_background` true does not, since its output is read as it comes. `--originals` and the
+other shaping flags without `--shape`, or `--shape` without `--originals`, deny.
 
 **It denies what it cannot judge**: input that is not valid JSON or is larger than 1 MiB,
 another event, no tool, a `tool_input` that is not an object or has no command string, a `timeout` that is not a positive number, a policy
