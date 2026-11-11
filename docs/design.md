@@ -342,8 +342,8 @@ linked into several runs counted once. A new original that would pass either is 
 an old one evicted, since a handle already in a model's context must not dangle; the output is
 then cut as without shaping, and the result and the audit say why. An output past the smaller
 cap, or past 256 MiB (`MaxShapeHold`) whatever the caps, is not held whole, and its original is
-not kept: the binary holds at most that, and a copy of it for the summarizer, outside the
-command's memory ceiling. Several `run` processes keep within the caps together: measuring and
+not kept: the binary holds at most that, a copy of it for the summarizer and a tail of up to two
+thirds of `Over`, outside the command's memory ceiling. Several `run` processes keep within the caps together: measuring and
 writing happen under exclusive locks on `.adanext-exec-originals.lock` in the root, when there
 is one, and then in the directory, each made through a handle to its directory, so writers of
 one directory wait for each other whatever root they name. Each original is written to a
