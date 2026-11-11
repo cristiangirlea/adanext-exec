@@ -124,8 +124,8 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "print":
 		// Writes the files ADANEXT_TEST_PRINT names, in order, each "out:" one to stdout and
-		// each "err:" one to stderr, separated by the path list separator.
-		for _, part := range filepath.SplitList(os.Getenv("ADANEXT_TEST_PRINT")) {
+		// each "err:" one to stderr, one part a line.
+		for _, part := range strings.Split(os.Getenv("ADANEXT_TEST_PRINT"), "\n") {
 			stream, path, _ := strings.Cut(part, ":")
 			data, err := os.ReadFile(path)
 			if err != nil {
