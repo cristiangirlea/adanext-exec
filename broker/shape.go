@@ -15,6 +15,11 @@ import (
 // DefaultShapeOver is the size past which Shape shapes an output when Over is zero.
 const DefaultShapeOver = 30000
 
+// MaxShapeHold bounds the output Shape holds, whatever the caps: an output past it is cut, and
+// its original not kept. The binary holds it, and a copy for the summarizer, outside the
+// command's memory ceiling.
+const MaxShapeHold = 256 << 20
+
 // Shape asks Run to take a command's stdout and stderr as one output, in the order written,
 // and to write it to Stdout once the command has ended: as it is when it is at most Over bytes,
 // and otherwise with the whole of it kept under Dir behind a handle and a checked summary in its
@@ -46,8 +51,8 @@ func (s *Shape) open(c Command) (*originals.Store, int, error) {
 	switch {
 	case s.Dir == "":
 		return nil, 0, invalid("a Shape without a directory")
-	case s.Over < 0:
-		return nil, 0, invalid("a negative Shape.Over")
+	case s.Over < 0 || s.Over > MaxShapeHold:
+		return nil, 0, invalid("Shape.Over is not from 0 to %d", MaxShapeHold)
 	case s.DirMax < 0 || s.AllMax < 0:
 		return nil, 0, invalid("a negative originals cap")
 	case c.OutputCap != 0:
@@ -66,7 +71,7 @@ func (s *Shape) open(c Command) (*originals.Store, int, error) {
 
 // runShaped is run with the output held, then shaped and written to the caller's Stdout.
 func runShaped(ctx context.Context, c Command, store *originals.Store, over int) (Result, bool, error) {
-	h := &held{limit: max(store.Limit(), int64(over)), keepTail: over - cutHead(over)}
+	h := &held{limit: max(min(store.Limit(), MaxShapeHold), int64(over)), keepTail: over - cutHead(over)}
 	inner := c
 	inner.Stdout, inner.Stderr, inner.OutputCap = h, h, 0
 	res, ran, err := run(ctx, inner)

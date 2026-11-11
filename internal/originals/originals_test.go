@@ -12,17 +12,20 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const helperEnv = "ADANEXT_ORIGINALS_HELPER"
 
 // TestMain runs the test binary as a writer of its own when helperEnv names a directory: it
-// saves ADANEXT_ORIGINALS_TEXT there under a cap of ADANEXT_ORIGINALS_MAX and exits 0 when the
+// saves ADANEXT_ORIGINALS_TEXT there, under ADANEXT_ORIGINALS_ROOT when set, with the caps
+// ADANEXT_ORIGINALS_MAX and ADANEXT_ORIGINALS_ALL (empty: the default), and exits 0 when the
 // original was kept, 3 when the store was full, 1 on any other error.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(helperEnv); dir != "" {
-		limit, _ := strconv.ParseInt(os.Getenv("ADANEXT_ORIGINALS_MAX"), 10, 64)
-		s, err := Open(dir, "", limit, limit)
+		dirMax, _ := strconv.ParseInt(os.Getenv("ADANEXT_ORIGINALS_MAX"), 10, 64)
+		allMax, _ := strconv.ParseInt(os.Getenv("ADANEXT_ORIGINALS_ALL"), 10, 64)
+		s, err := Open(dir, os.Getenv("ADANEXT_ORIGINALS_ROOT"), dirMax, allMax)
 		if err == nil {
 			_, err = s.Save([]byte(os.Getenv("ADANEXT_ORIGINALS_TEXT")))
 		}
@@ -243,6 +246,47 @@ func TestWritersInSeveralProcessesKeepWithinTheCap(t *testing.T) {
 			"ADANEXT_ORIGINALS_TEXT="+fmt.Sprintf("%0*d", size, i))
 		cmds[i] = cmd
 	}
+	kept := runWriters(t, cmds)
+	if kept != limit/size {
+		t.Fatalf("%d kept, want %d", kept, limit/size)
+	}
+	if total := sizeOf(t, dir); total > limit {
+		t.Fatalf("%d bytes kept under a cap of %d", total, limit)
+	}
+}
+
+// Every run's directory under one root, each written by its own process, keeps within the cap
+// over all: the root's lock holds them together.
+func TestWritersUnderOneRootKeepWithinTheCapOverAll(t *testing.T) {
+	root := t.TempDir()
+	const writers, size, limit = 8, 30, 100
+	cmds := make([]*exec.Cmd, writers)
+	for i := range cmds {
+		run := filepath.Join(root, fmt.Sprintf("run-%d", i))
+		if err := os.Mkdir(run, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=^$")
+		cmd.Env = append(os.Environ(), helperEnv+"="+filepath.Join(run, "originals"), "ADANEXT_ORIGINALS_ROOT="+root,
+			"ADANEXT_ORIGINALS_ALL="+strconv.Itoa(limit), "ADANEXT_ORIGINALS_TEXT="+fmt.Sprintf("%0*d", size, i))
+		cmds[i] = cmd
+	}
+	if kept := runWriters(t, cmds); kept != limit/size {
+		t.Fatalf("%d kept, want %d", kept, limit/size)
+	}
+	var total int64
+	for i := range writers {
+		total += sizeOf(t, filepath.Join(root, fmt.Sprintf("run-%d", i), "originals"))
+	}
+	if total > limit {
+		t.Fatalf("%d bytes kept under a cap over all of %d", total, limit)
+	}
+}
+
+// runWriters starts the writers together and counts those that kept their original; every other
+// one must have been refused as full.
+func runWriters(t *testing.T, cmds []*exec.Cmd) int {
+	t.Helper()
 	for _, cmd := range cmds {
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
@@ -261,18 +305,97 @@ func TestWritersInSeveralProcessesKeepWithinTheCap(t *testing.T) {
 			t.Errorf("a writer failed: %v", err)
 		}
 	}
-	if kept != limit/size || full != writers-kept {
-		t.Fatalf("%d kept and %d refused, want %d kept", kept, full, limit/size)
+	if kept+full != len(cmds) {
+		t.Fatalf("%d kept and %d refused of %d", kept, full, len(cmds))
+	}
+	return kept
+}
+
+// sizeOf sums the originals in dir; a missing dir holds none.
+func sizeOf(t *testing.T, dir string) int64 {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	var total int64
-	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if info, err := e.Info(); err == nil && strings.HasSuffix(e.Name(), ".txt") {
 			total += info.Size()
 		}
 	}
-	if total > limit {
-		t.Fatalf("%d bytes kept under a cap of %d", total, limit)
+	return total
+}
+
+func TestSaveDoesNotFollowADirectorySwappedForALink(t *testing.T) {
+	parent, other := t.TempDir(), t.TempDir()
+	dir := filepath.Join(parent, "originals")
+	s := open(t, dir, "", 0, 0)
+	if err := os.Rename(dir, filepath.Join(parent, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, dir); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if _, err := s.Save([]byte("x")); err == nil {
+		t.Fatal("saved through a link put in the directory's place")
+	}
+	if entries, _ := os.ReadDir(other); len(entries) != 0 {
+		t.Fatalf("wrote %d files where the link points", len(entries))
+	}
+}
+
+func TestALinkAtTheLocksNameIsNotFollowedOutOfTheDirectory(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, lockName)); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	s := open(t, dir, "", 0, 0)
+	if _, err := s.Save([]byte("x")); err == nil {
+		t.Fatal("took a lock through a link out of the directory")
+	}
+}
+
+func TestAHeldLockTimesOutWithAnErrorThatIsNotFull(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir, "", 0, 0)
+	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if busy, err := tryLock(f); err != nil || busy {
+		t.Fatalf("take the lock: busy %v, %v", busy, err)
+	}
+	old := lockWait
+	lockWait = 100 * time.Millisecond
+	t.Cleanup(func() { lockWait = old })
+	if _, err := s.Save([]byte("x")); err == nil || errors.Is(err, ErrFull) || !strings.Contains(err.Error(), "held") {
+		t.Fatalf("saved past a held lock: %v", err)
+	}
+}
+
+func TestAStoreThatCannotBeMeasuredRefusesWithAnErrorThatIsNotFull(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "run-x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "run-x", "originals"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "run-y"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := open(t, filepath.Join(root, "run-y", "originals"), root, 0, 0)
+	if _, err := s.Save([]byte("x")); err == nil || errors.Is(err, ErrFull) {
+		t.Fatalf("saved with a store it could not measure: %v", err)
 	}
 }
 

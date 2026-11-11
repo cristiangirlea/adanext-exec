@@ -330,19 +330,26 @@ says a shaping happened and gives the handle and size, never the content.
 run keeps every original in its record (`<run>/originals`) whichever agent ran the command, and
 hrn's own reader and its copying of originals into a continued run work on them unchanged. An
 original is `<dir>/<handle>.txt`, the handle being the first 16 hex characters of the SHA-256
-of its bytes, as harness names its own. The directory is made owner-only when missing (the
-originals hold whatever the commands printed, secrets included) and must be a plain directory,
-not a link; one that cannot be used leaves the command not run. Two caps bound the store, as
+of its bytes, as harness names its own. The originals hold whatever the commands printed, secrets
+included, so on Linux and macOS the directory is owner-only (made so, or tightened when it
+exists); on Windows it takes its parent's access list, as the audit's does. It must be a plain
+directory, not a link, and the directory written is the one its path named when it was checked:
+everything happens through a handle to it, so a link put in its place is never followed. One
+that cannot be used leaves the command not run. Two caps bound the store, as
 harness's do: 64 MiB in the directory, and 1 GiB over it and every run's `originals` under a
 root the caller may name (`Shape.Root`, the directory holding one directory per run), a file
 linked into several runs counted once. A new original that would pass either is refused, never
 an old one evicted, since a handle already in a model's context must not dangle; the output is
 then cut as without shaping, and the result and the audit say why. An output past the smaller
-cap is not held at all, so memory stays bounded by it. Several `run` processes keep within the
-caps together: measuring and writing happen under an exclusive lock on a file in the root (or
-the directory), `.adanext-exec-originals.lock`, each original written to a temporary file and
-renamed into place. A writer that does not take the lock (hrn's own, for MCP results) is not
-held by it. Summarizing takes time after the command ends: about a second for every 6 MiB.
+cap, or past 256 MiB (`MaxShapeHold`) whatever the caps, is not held whole, and its original is
+not kept: the binary holds at most that, and a copy of it for the summarizer, outside the
+command's memory ceiling. Several `run` processes keep within the caps together: measuring and
+writing happen under exclusive locks on `.adanext-exec-originals.lock` in the root, when there
+is one, and then in the directory, each made through a handle to its directory, so writers of
+one directory wait for each other whatever root they name. Each original is written to a
+temporary file and renamed into place. A writer that does not take the locks (hrn's own, for
+MCP results) is not held by them. Summarizing happens after the command has ended, outside its
+timeout, and takes about a second for every 6 MiB.
 
 Reading an original back comes with M9c (#71).
 

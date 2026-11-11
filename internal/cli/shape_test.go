@@ -124,3 +124,23 @@ func auditFile(t *testing.T, dir string) string {
 	}
 	return files[0]
 }
+
+// An original that cannot be kept for a reason other than a cap fails the result (exit 120), with
+// the output cut.
+func TestRunShapeFailsWhenTheOriginalsCannotBeMeasured(t *testing.T) {
+	setup(t)
+	root := t.TempDir()
+	for _, d := range []string{"run-x", "run-y"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "run-x", "originals"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "run-y", "originals")
+	code, stdout, stderr := main(t, context.Background(), "", "print:40000", "run", "--shape", "--originals", dir, "--originals-root", root, "--")
+	if code != ExitBrokerFailed || !strings.Contains(stdout, "[... 10000 bytes cut ...]") || strings.Contains(stdout, "original:") {
+		t.Fatalf("code %d, stdout %d bytes, stderr %q; want %d with the cut", code, len(stdout), stderr, ExitBrokerFailed)
+	}
+}
