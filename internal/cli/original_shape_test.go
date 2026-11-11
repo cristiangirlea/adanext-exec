@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/adanext-exec/broker"
 	"github.com/cristiangirlea/adanext-exec/internal/originals"
 )
 
@@ -120,5 +122,53 @@ func TestTheHooksShapingRewriteRunsThroughTheShell(t *testing.T) {
 	code, stdout, _ = through(big, true)
 	if code != 0 || stdout != text {
 		t.Fatalf("a background call: code %d, %d bytes; want the output as it is", code, len(stdout))
+	}
+}
+
+// The same through the PowerShell tool's shells, whose rewrite quotes the directory its own way.
+func TestTheHooksShapingRewriteRunsThroughPowerShell(t *testing.T) {
+	shells := powerShellsHere()
+	if len(shells) == 0 {
+		t.Skip("no PowerShell here")
+	}
+	e := setup(t)
+	exe := useTestBinaryForRewrite(t, e)
+	oldSelf, oldLook := selfExecutable, lookPath
+	selfExecutable = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { selfExecutable, lookPath = oldSelf, oldLook })
+	for _, sh := range shells {
+		// The PowerShell tool takes pwsh when it is in PATH: this one is chosen.
+		lookPath = func(string) (string, error) {
+			if sh == broker.ShellPwsh {
+				return "pwsh", nil
+			}
+			return "", exec.ErrNotFound
+		}
+		dir := filepath.Join(t.TempDir(), "it's a ’dir’", "originals")
+		if err := os.Mkdir(filepath.Dir(dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		through := func(command string, background bool) (int, string, string) {
+			t.Helper()
+			_, d, stderr := hookMain(t, hookRequest(t, "PowerShell", map[string]any{"command": command, "run_in_background": background}), "claude-code", "--shape", "--originals", dir)
+			if d == nil || d.Decision != "allow" {
+				t.Fatalf("%s %q: answer %+v, stderr %q", sh, command, d, stderr)
+			}
+			return main(t, context.Background(), "", "", "run", "--shell", string(sh), "--", rewriteOf(t, d))
+		}
+		big := `[Console]::Out.Write('z' * 40000)`
+		text := strings.Repeat("z", 40000)
+		h := handleOf(text)
+		code, stdout, stderr := through(big, false)
+		if code != 0 || !strings.Contains(stdout, "[... 10000 bytes cut ...]") || !strings.HasSuffix(stdout, "original "+h+" --range 0-30000 reads it, at most 30000 bytes a read\n") {
+			t.Fatalf("%s: code %d, stdout of %d bytes ending %q, stderr %q; want it shaped", sh, code, len(stdout), stdout[max(0, len(stdout)-200):], stderr)
+		}
+		code, stdout, stderr = through("adanext-exec original "+h+" --range 0-30000", false)
+		if code != 0 || stdout != text[:30000] {
+			t.Fatalf("%s: the hinted read: code %d, %d bytes, stderr %q", sh, code, len(stdout), stderr)
+		}
+		if code, stdout, _ = through(big, true); code != 0 || stdout != text {
+			t.Fatalf("%s: a background call: code %d, %d bytes; want the output as it is", sh, code, len(stdout))
+		}
 	}
 }
