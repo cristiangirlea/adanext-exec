@@ -48,10 +48,7 @@ func Read(dir, handle, rng string) ([]byte, int64, error) {
 			return nil, 0, fmt.Errorf("%w: %q is more than %d bytes; read it in smaller ranges", ErrRange, rng, MaxRead)
 		}
 	}
-	if err := plainDir(dir); err != nil {
-		return nil, 0, err
-	}
-	r, err := os.OpenRoot(dir)
+	r, err := openPlain(dir)
 	if err != nil {
 		return nil, 0, err
 	}
