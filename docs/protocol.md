@@ -28,7 +28,7 @@ exits.
 | `--timeout D` | Kill the command's tree after D (Go's duration syntax: `90s`, `5m`). |
 | `--output-cap N` | Bound each output stream to N bytes; with `--shape`, the size past which the one output is shaped. |
 | `--shape` | Hold standard output and standard error as one output, in the order written, until the command ends, then write it to standard output: as it is when it is at most `--output-cap` bytes (default 30000), otherwise with a checked summary or its head and tail in its place and the original kept (below). Needs `--originals`. |
-| `--originals DIR` | With `--shape`: the directory that keeps the originals. It is made, owner-only, when its parent exists; a link or anything but a directory there is refused (not run, 126). |
+| `--originals DIR` | With `--shape`: the directory that keeps the originals. It is made when its parent exists, owner-only on Linux and macOS (an existing one is tightened); on Windows it takes its parent's access list. A link or anything but a directory there is refused (not run, 126). |
 | `--originals-root DIR` | With `--shape`: a directory with one directory per run, each with its originals in a directory named `originals`: those count together with `--originals` against `--originals-all-max`. |
 | `--originals-max SIZE` | With `--shape`: the cap on `--originals` (default `64M`). |
 | `--originals-all-max SIZE` | With `--shape`: the cap on `--originals` and the root's originals together (default `1G`). |
@@ -60,8 +60,8 @@ summary does, its first two thirds of the threshold and its last third around a 
 original: <handle> (<n> bytes)
 ```
 
-An original that would pass a cap is not kept, never an old one removed: the output is cut, with
-no such line, and standard error says why. Nothing is written while the command runs, so a
+An original that would pass a cap, or an output past 256 MiB, is not kept, never an old one
+removed: the output is cut, with no such line, and standard error says why. Nothing is written while the command runs, so a
 command whose output must be seen as it comes (a server, a watch) is run without `--shape`.
 Summarizing a very large output takes time after the command ends, about a second for every 6
 MiB. The audit line says what was done (`shaped`, `original`, `original_bytes`,

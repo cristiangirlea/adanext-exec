@@ -34,4 +34,7 @@ func TestOpenRefusesAJunctionAtTheDirectorysName(t *testing.T) {
 	if _, err := s.Save([]byte("x")); err == nil {
 		t.Fatal("saved through a junction put in the directory's place")
 	}
+	if entries, _ := os.ReadDir(other); len(entries) != 0 {
+		t.Fatalf("wrote %d files where the junction points", len(entries))
+	}
 }

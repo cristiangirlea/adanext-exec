@@ -9,26 +9,22 @@ import (
 	"syscall"
 )
 
-// tryLock takes an exclusive lock on path without waiting; busy says another holds it. The
-// lock goes with the file, or the process, however it ends.
-func tryLock(path string) (unlock func(), busy bool, err error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, false, fmt.Errorf("open the originals' lock: %w", err)
-	}
+// tryLock takes an exclusive lock on f without waiting; busy says another holds it. The lock
+// goes with the file, or the process, however it ends.
+func tryLock(f *os.File) (busy bool, err error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, true, nil
+			return true, nil
 		}
-		return nil, false, fmt.Errorf("lock %s: %w", path, err)
+		return false, err
 	}
-	return func() { f.Close() }, false, nil
+	return false, nil
 }
 
-// ownerOnly refuses a directory another user owns, and takes away any access for others.
-func ownerOnly(dir string) error {
-	info, err := os.Lstat(dir)
+// ownerOnly refuses a directory another user owns, and takes away any access for others, through
+// the directory's own root so no link is followed.
+func ownerOnly(r *os.Root, dir string) error {
+	info, err := r.Stat(".")
 	if err != nil {
 		return err
 	}
@@ -36,7 +32,7 @@ func ownerOnly(dir string) error {
 		return fmt.Errorf("%s belongs to another user", dir)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return os.Chmod(dir, 0o700)
+		return r.Chmod(".", 0o700)
 	}
 	return nil
 }

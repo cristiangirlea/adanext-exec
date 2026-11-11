@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // printing is a command that writes parts in order: "out:" ones to stdout, "err:" ones to stderr.
@@ -181,10 +182,11 @@ func TestShapeCutsAndSaysWhyWhenTheOriginalWouldPassACap(t *testing.T) {
 func TestShapeIsInvalidWithAnOutputCapOrWithoutADirectory(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	for name, s := range map[string]*Shape{
-		"no directory":    {},
-		"a negative over": {Dir: t.TempDir(), Over: -1},
-		"a negative cap":  {Dir: t.TempDir(), DirMax: -1},
-		"with output cap": {Dir: t.TempDir()},
+		"no directory":       {},
+		"a negative over":    {Dir: t.TempDir(), Over: -1},
+		"a negative cap":     {Dir: t.TempDir(), DirMax: -1},
+		"with output cap":    {Dir: t.TempDir()},
+		"over past the hold": {Dir: t.TempDir(), Over: MaxShapeHold + 1},
 	} {
 		c := helper("touch", "ADANEXT_TEST_MARKER="+marker)
 		c.Shape = s
@@ -269,5 +271,52 @@ func TestShapeFailsTheResultWhenTheOriginalCannotBeKeptForAnotherReason(t *testi
 	}
 	if want := line[:20000] + "\n[... 10000 bytes cut ...]\n" + line[30000:]; stdout.String() != want {
 		t.Fatalf("output of %d bytes, want the cut", stdout.Len())
+	}
+}
+
+// A cut never splits a character: the head ends before one its end would cut, and the tail
+// starts after one its start would.
+func TestShapeCutsBetweenCharacters(t *testing.T) {
+	dir := t.TempDir()
+	head := strings.Repeat("a", 19999) + "\u00e9"    // the head's end, 20000, falls inside the two-byte character
+	tail := "\u20ac" + strings.Repeat("c", 9999)     // the tail's start, 10000 bytes before the end, falls inside the three-byte one
+	line := head + strings.Repeat("b", 15000) + tail // one line, so there is no summary
+	c := printing(t, "out:"+line)
+	var stdout bytes.Buffer
+	c.Stdout = &stdout
+	c.Shape = &Shape{Dir: dir}
+	res, err := Run(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := len(line) - 19999 - 9999
+	want := strings.Repeat("a", 19999) + fmt.Sprintf("\n[... %d bytes cut ...]\n", cut) + strings.Repeat("c", 9999) + "\n"
+	if got := stdout.String(); !strings.HasPrefix(got, want) || !utf8.ValidString(got) {
+		t.Fatalf("output starts %q... and ends ...%q, want whole characters around the cut", got[19990:20040], got[len(got)-120:])
+	}
+	if res.OutputCut != int64(cut) {
+		t.Fatalf("OutputCut %d, want %d", res.OutputCut, cut)
+	}
+}
+
+// A threshold past the smaller cap still passes an output up to it, and cuts a longer one
+// without keeping it.
+func TestShapeWithAThresholdPastTheCap(t *testing.T) {
+	for _, n := range []int{1500, 2500} {
+		dir := t.TempDir()
+		c := printing(t, "out:"+digits(n))
+		var stdout bytes.Buffer
+		c.Stdout = &stdout
+		c.Shape = &Shape{Dir: dir, DirMax: 1000, Over: 2000}
+		res, err := Run(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case n <= 2000 && (stdout.String() != digits(n) || res.OriginalRefused != ""):
+			t.Errorf("%d bytes: %q (%+v), want them as they are", n, stdout.String(), res)
+		case n > 2000 && (res.OriginalRefused == "" || res.Original != "" || len(originalsIn(t, dir)) != 0):
+			t.Errorf("%d bytes: %+v, want refused and nothing kept", n, res)
+		}
 	}
 }

@@ -25,7 +25,8 @@ const (
 // ErrFull means an original was not kept because a cap would be passed.
 var ErrFull = errors.New("the originals are full")
 
-// lockName is the file whose lock serializes measuring and writing, in the root or the directory.
+// lockName is the file whose lock serializes measuring and writing, in the directory and in the
+// root.
 const lockName = ".adanext-exec-originals.lock"
 
 // lockWait bounds the wait for another writer, which holds the lock only to measure and write.
@@ -66,10 +67,12 @@ func Open(dir, root string, dirMax, allMax int64) (*Store, error) {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("make the originals directory: %w", err)
 	}
-	if err := plainDir(dir); err != nil {
+	r, err := openPlain(dir)
+	if err != nil {
 		return nil, err
 	}
-	if err := ownerOnly(dir); err != nil {
+	defer r.Close()
+	if err := ownerOnly(r, dir); err != nil {
 		return nil, fmt.Errorf("the originals directory: %w", err)
 	}
 	if root != "" {
@@ -90,6 +93,31 @@ func Open(dir, root string, dirMax, allMax int64) (*Store, error) {
 // Limit is the most one original can hold: the smaller cap.
 func (s *Store) Limit() int64 { return min(s.dirMax, s.allMax) }
 
+// openPlain opens dir as a root only when its path names a plain directory and the directory
+// opened is the one the path names, so a link put in its place is never followed; what is done
+// through the root then stays in that directory.
+func openPlain(dir string) (*os.Root, error) {
+	if err := plainDir(dir); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := r.Stat(".")
+	if err == nil {
+		var named os.FileInfo
+		if named, err = os.Lstat(dir); err == nil && (named.Mode().Type() != fs.ModeDir || !os.SameFile(opened, named)) {
+			err = fmt.Errorf("the originals directory %s changed while it was opened", dir)
+		}
+	}
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
 // plainDir refuses anything at path but a directory: a link, a junction or a file.
 func plainDir(path string) error {
 	info, err := os.Lstat(path)
@@ -105,20 +133,16 @@ func plainDir(path string) error {
 // Save keeps text and returns its handle. The same bytes kept before return the same handle
 // and count nothing; an original that would pass a cap is refused with ErrFull.
 func (s *Store) Save(text []byte) (string, error) {
-	unlock, err := s.lock()
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
-	// Checked again under the lock: a link put in its place since Open is not followed.
-	if err := plainDir(s.dir); err != nil {
-		return "", err
-	}
-	r, err := os.OpenRoot(s.dir)
+	r, err := openPlain(s.dir)
 	if err != nil {
 		return "", err
 	}
 	defer r.Close()
+	unlock, err := s.lock(r)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	handle := Handle(text)
 	name := handle + ".txt"
 	if held, err := holds(r, name, text); err != nil || held {
@@ -189,24 +213,55 @@ func write(r *os.Root, name string, text []byte) error {
 	return r.Rename(temp, name)
 }
 
-// lock takes the lock that serializes every writer of the root, or of the directory alone.
-func (s *Store) lock() (func(), error) {
-	at := s.dir
-	if s.root != "" {
-		at = s.root
+// lock takes the root's lock, when there is a root, then the directory's (dir, opened), so every
+// writer of the directory waits for the others whatever root each names, and every writer under
+// the root for those under it. Each lock file is made through a root, which no link leaves.
+func (s *Store) lock(dir *os.Root) (func(), error) {
+	var held []*os.File
+	unlock := func() {
+		for i := len(held) - 1; i >= 0; i-- {
+			held[i].Close()
+		}
 	}
-	path := filepath.Join(at, lockName)
-	deadline := time.Now().Add(lockWait)
-	for {
-		unlock, busy, err := tryLock(path)
+	if s.root != "" {
+		r, err := os.OpenRoot(s.root)
 		if err != nil {
 			return nil, err
 		}
-		if !busy {
-			return unlock, nil
+		f, err := lockIn(r, s.root)
+		r.Close()
+		if err != nil {
+			return nil, err
 		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("another writer held %s for %v", path, lockWait)
+		held = append(held, f)
+	}
+	f, err := lockIn(dir, s.dir)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	return func() { f.Close(); unlock() }, nil
+}
+
+// lockIn takes the lock file in r, waiting up to lockWait for another writer; closing the file
+// lets it go.
+func lockIn(r *os.Root, at string) (*os.File, error) {
+	f, err := r.OpenFile(lockName, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open the originals' lock in %s: %w", at, err)
+	}
+	deadline := time.Now().Add(lockWait)
+	for {
+		busy, err := tryLock(f)
+		if err == nil && !busy {
+			return f, nil
+		}
+		if err == nil && time.Now().After(deadline) {
+			err = fmt.Errorf("another writer held it for %v", lockWait)
+		}
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("lock the originals in %s: %w", at, err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
