@@ -27,9 +27,12 @@ var (
 
 // Read returns bytes a to b of the original handle in dir, zero-based and end exclusive, or the
 // whole original when rng is empty, and the original's size. An end past the original reads to
-// its end; a start past it, a backward range, or more than MaxRead bytes is ErrRange. Only a
-// regular file directly in dir is read.
-func Read(dir, handle, rng string) ([]byte, int64, error) {
+// its end; a start past it, a backward range, or more than limit bytes (at most MaxRead; zero
+// is MaxRead) is ErrRange. Only a regular file directly in dir is read.
+func Read(dir, handle, rng string, limit int64) ([]byte, int64, error) {
+	if limit <= 0 || limit > MaxRead {
+		limit = MaxRead
+	}
 	if !handlePattern.MatchString(handle) {
 		return nil, 0, fmt.Errorf("%w: %q", ErrHandle, handle)
 	}
@@ -44,8 +47,8 @@ func Read(dir, handle, rng string) ([]byte, int64, error) {
 		if a > b {
 			return nil, 0, fmt.Errorf("%w: %q ends before it starts", ErrRange, rng)
 		}
-		if b-a > MaxRead {
-			return nil, 0, fmt.Errorf("%w: %q is more than %d bytes; read it in smaller ranges", ErrRange, rng, MaxRead)
+		if b-a > limit {
+			return nil, 0, fmt.Errorf("%w: %q is more than %d bytes; read it in ranges of at most %d", ErrRange, rng, limit, limit)
 		}
 	}
 	r, err := openPlain(dir)
@@ -76,8 +79,8 @@ func Read(dir, handle, rng string) ([]byte, int64, error) {
 	}
 	size := opened.Size()
 	if rng == "" {
-		if size > MaxRead {
-			return nil, size, fmt.Errorf("%w: original %s is %d bytes, more than %d a read; read it with --range a-b", ErrRange, handle, size, MaxRead)
+		if size > limit {
+			return nil, size, fmt.Errorf("%w: original %s is %d bytes, more than %d a read; read it with --range a-b", ErrRange, handle, size, limit)
 		}
 		b = size
 	}

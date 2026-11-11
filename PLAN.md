@@ -89,7 +89,10 @@ Newest first.
 - 2026-11-11: M9c (PR #74, #71), which completes M9. `run --shape` recognises a read of an
   original only in its exact form, the bare program name included, and runs its own binary's
   read in its place, so a program elsewhere in PATH named `adanext-exec`, or text around the
-  read, cannot borrow the unshaped, uncut pass; the read bounds itself at 1 MiB. A range's end
+  read, cannot borrow the unshaped, uncut pass. The policy judges the read as the agent wrote it
+  before the swap, so a rule on that text holds. A read is bounded at 1 MiB, and through `run
+  --shape` at the threshold, the size the caller takes its agent to see whole, so a read the
+  original's line suggests is never cut by the agent's own tool. A range's end
   past the original reads to its end, so an agent can step through without knowing the size;
   its start past the end is refused. harness's `read_original` also reads lines and JSON
   pointers; the gate's reader takes byte ranges only, as #1 asked. The hook leaves a background

@@ -57,16 +57,20 @@ summary does, its first two thirds of the threshold and its last third around a 
 `[... N bytes cut ...]`; then a last line
 
 ```
-original: <handle> (<n> bytes); adanext-exec original <handle> --range 0-<k> reads it, at most 1048576 bytes a read
+original: <handle> (<n> bytes); adanext-exec original <handle> --range 0-<k> reads it, at most <m> bytes a read
 ```
 
-where `<k>` is the threshold, or `<n>` when that is smaller. The command it names, given exactly
-so (the bare name `adanext-exec` or `adanext-exec.exe`, `original`, the handle, and at most one
-`--range a-b` or `--range=a-b`, as shell text with nothing else, or as argv), is not run as
-written: `run --shape` runs this binary's own `original` for it, with `--originals`, and passes
-its output on as it is, neither shaped nor cut by the threshold. Anything else, a path to the
-program or another word included, is run and shaped as usual. So an agent whose shell goes
-through the gate reads an original whole, in ranges below its own output limit.
+where `<m>` is the threshold, or 1048576 (one read's own bound) when that is smaller, and `<k>`
+is `<m>`, or `<n>` when that is smaller. The command it names, given exactly so (the bare name
+`adanext-exec` or `adanext-exec.exe`, `original`, the handle, and at most one `--range a-b` or
+`--range=a-b`, as shell text with nothing else, or as argv), is judged by the policy as written
+first. When the policy allows it, or asks under the rule `--approved` names, it is not run as
+written: `run --shape` runs this binary's own `original` for it, with `--originals` and `--max
+<m>`, and passes its output on as it is, neither shaped nor cut. So a read is at most a threshold
+long, the size the caller takes its agent to see whole, and a longer one is refused (121); an
+agent whose shell goes through the gate reads an original whole, a threshold at a time. A read
+the policy refuses or asks about is left as written, for `run` to refuse as any command.
+Anything else, a path to the program or another word included, is run and shaped as usual.
 
 An original that would pass a cap, or an output past 256 MiB, is not kept, never an old one
 removed: the output is cut, with no such line, and standard error says why. Nothing is written while the command runs, so a
@@ -102,20 +106,21 @@ The binary's own messages go to standard error.
 ## `adanext-exec original`
 
 ```
-adanext-exec original <handle> [--range a-b] --originals DIR
+adanext-exec original <handle> [--range a-b] [--max N] --originals DIR
 ```
 
 Prints the original `run --shape` kept as `<DIR>/<handle>.txt`, or bytes a to b of it,
 zero-based and end exclusive; an end past the original reads to its end. One read is at most
-1 MiB (1048576 bytes): a larger original, or range, is refused, and is read in ranges. The handle
-is 16 lowercase hex characters, and only a regular file directly in the directory is read,
-through a handle to the directory as its path named it, so no link is followed out of it.
+`--max` bytes, 1 MiB (1048576) at most and by default: a larger original, or range, is refused,
+and is read in ranges. The handle is 16 lowercase hex characters, and only a regular file
+directly in the directory is read, through a handle to the directory as its path named it, so no
+link is followed out of it. It refuses to run elevated, as `run` does.
 
 | Code | Meaning |
 |---|---|
 | 0 | The bytes are on standard output, as they are. |
-| 121 | Not a handle, not a range (`a-b`, a backward one, one that starts past the original, or one past the bound), a whole original past the bound, no handle, or no `--originals`. |
-| 126 | Nothing to read: no such original, not a regular file, or a directory that is not a plain one. |
+| 121 | Not a handle, not a range (`a-b`, a backward one, one that starts past the original, or one past the bound), a whole original past the bound, no handle, no `--originals`, or a `--max` outside 1 to 1048576. |
+| 126 | Nothing to read: no such original, not a regular file, or a directory that is not a plain one; or the binary runs elevated. |
 | 120 | Writing the bytes failed. |
 
 ## `adanext-exec check --json`

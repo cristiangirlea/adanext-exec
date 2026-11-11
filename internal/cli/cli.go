@@ -80,7 +80,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		return serve(ctx, args[1:], stderr)
 	case "original":
-		// A read of a file the user's own runs wrote: nothing runs, so elevation changes nothing.
+		if isElevated() {
+			fmt.Fprintln(stderr, "adanext-exec: "+errElevated)
+			return ExitCannotRun
+		}
 		return original(args[1:], stdout, stderr)
 	case "check":
 		// check answers the refusal in its own JSON, as it answers everything else.

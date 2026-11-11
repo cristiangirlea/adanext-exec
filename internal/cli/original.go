@@ -23,6 +23,7 @@ func original(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	rng := flags.String("range", "", fmt.Sprintf("bytes a-b of the original, zero-based and end exclusive, at most %d of them", originals.MaxRead))
 	dir := flags.String("originals", "", "the directory that keeps the originals")
+	limit := flags.Int64("max", originals.MaxRead, fmt.Sprintf("the most bytes one read gives, up to %d", originals.MaxRead))
 	fail := func(msg string) int {
 		fmt.Fprintf(stderr, "adanext-exec original: %s\n", msg)
 		return ExitUsage
@@ -48,8 +49,10 @@ func original(args []string, stdout, stderr io.Writer) int {
 		return fail("no handle")
 	case *dir == "":
 		return fail("no --originals")
+	case *limit < 1 || *limit > originals.MaxRead:
+		return fail(fmt.Sprintf("--max is from 1 to %d", originals.MaxRead))
 	}
-	data, _, err := originals.Read(*dir, handle, *rng)
+	data, _, err := originals.Read(*dir, handle, *rng, *limit)
 	switch {
 	case errors.Is(err, originals.ErrHandle), errors.Is(err, originals.ErrRange):
 		return fail(err.Error())

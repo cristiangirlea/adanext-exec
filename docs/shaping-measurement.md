@@ -19,8 +19,9 @@ size from the audit line, "out" what the binary wrote, the original's last line 
 
 Summing the seven, 1,128,867 bytes went in and 154,765 came out (14%); the two summaries alone
 took 348,809 bytes to 3,944 (1%). An output past the threshold costs at most about 30 KB either
-way, and every original read back whole: a 50,000-byte range of the JSON original, read through
-`run --shape` with the command its last line names, came back byte for byte.
+way. A 50,000-byte range of the JSON original, read through `run --shape` with the command its
+last line names, came back byte for byte (with a threshold of 30,000, reads are now bounded by
+it, so the same original reads back in ranges of 30,000).
 
 What it says about the summarizer: it is conservative by design. A summary must keep every line
 holding "error", "FAIL" or "panic" as it is, so the head and tail of plain terminal output fail

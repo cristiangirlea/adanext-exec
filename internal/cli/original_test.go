@@ -64,6 +64,9 @@ func TestOriginalRefusesWhatItCannotRead(t *testing.T) {
 		{[]string{"original", h, "--range", "5-1", "--originals", dir}, ExitUsage},
 		{[]string{"original", h, "--range", "20-30", "--originals", dir}, ExitUsage},
 		{[]string{"original", h, "--range", "0-1048577", "--originals", dir}, ExitUsage},
+		{[]string{"original", h, "--range", "0-6", "--max", "5", "--originals", dir}, ExitUsage},
+		{[]string{"original", h, "--max", "0", "--originals", dir}, ExitUsage},
+		{[]string{"original", h, "--max", "1048577", "--originals", dir}, ExitUsage},
 		{[]string{"original", originals.Handle([]byte("never kept")), "--originals", dir}, ExitCannotRun},
 		{[]string{"original", h, "--originals", filepath.Join(dir, "missing")}, ExitCannotRun},
 	} {
@@ -98,7 +101,8 @@ func TestRunShapePassesAReadOfAnOriginalThroughWhole(t *testing.T) {
 		"shell text, range joined": {[]string{"--shell", "pwsh", "--", "adanext-exec.exe original " + h + " --range=0-40000"}, text[:40000]},
 		"argv, the whole":          {[]string{"--", "adanext-exec", "original", h}, text},
 	} {
-		argv := append([]string{"run", "--shape", "--originals", dir}, c.args...)
+		// A threshold of 60000, so one read may take the whole original.
+		argv := append([]string{"run", "--shape", "--originals", dir, "--output-cap", "60000"}, c.args...)
 		code, stdout, stderr := main(t, context.Background(), "", "", argv...)
 		if code != 0 || stdout != c.want {
 			t.Errorf("%s: code %d, %d bytes (stderr %q), want the %d bytes of the original unshaped", name, code, len(stdout), stderr, len(c.want))
@@ -185,7 +189,7 @@ func TestRunShapeNamesTheReadInTheLastLine(t *testing.T) {
 		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
 	h := handleOf(strings.Repeat("x", 40000))
-	want := fmt.Sprintf("\noriginal: %s (40000 bytes); adanext-exec original %s --range 0-30000 reads it, at most %d bytes a read\n", h, h, originals.MaxRead)
+	want := fmt.Sprintf("\noriginal: %s (40000 bytes); adanext-exec original %s --range 0-30000 reads it, at most 30000 bytes a read\n", h, h)
 	if !strings.HasSuffix(stdout, want) {
 		t.Fatalf("stdout ends %q, want %q", stdout[max(0, len(stdout)-200):], want)
 	}
