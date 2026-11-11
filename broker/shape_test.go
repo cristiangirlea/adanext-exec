@@ -27,7 +27,7 @@ func printing(t *testing.T, parts ...string) Command {
 		}
 		list = append(list, stream+":"+path)
 	}
-	return helper("print", "ADANEXT_TEST_PRINT="+strings.Join(list, string(os.PathListSeparator)))
+	return helper("print", "ADANEXT_TEST_PRINT="+strings.Join(list, "\n"))
 }
 
 func handleOf(text string) string {
@@ -292,7 +292,7 @@ func TestShapeCutsBetweenCharacters(t *testing.T) {
 	cut := len(line) - 19999 - 9999
 	want := strings.Repeat("a", 19999) + fmt.Sprintf("\n[... %d bytes cut ...]\n", cut) + strings.Repeat("c", 9999) + "\n"
 	if got := stdout.String(); !strings.HasPrefix(got, want) || !utf8.ValidString(got) {
-		t.Fatalf("output starts %q... and ends ...%q, want whole characters around the cut", got[19990:20040], got[len(got)-120:])
+		t.Fatalf("output starts %q... and ends ...%q, want whole characters around the cut", got[:min(len(got), 20040)], got[max(0, len(got)-120):])
 	}
 	if res.OutputCut != int64(cut) {
 		t.Fatalf("OutputCut %d, want %d", res.OutputCut, cut)
