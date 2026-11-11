@@ -309,10 +309,13 @@ its messages; a log's warnings and errors with their context, repeated lines col
 count and long traces shortened; a JSON value's shape (its item or key count, the keys and one
 sample); a table's size with its first and last rows and every row with an error; head and tail
 for the rest. A summary replaces the output only when it keeps the invariants: every number,
-negation and path in it occurs in the original, no error line or failing test of the original
-is missing from it, any line it makes up (a count, a head) is recomputed from the original, and
-it is at most 28,000 bytes. Otherwise there is no summary, and the output passes as it would
-without shaping.
+negation and path in it occurs in the original, except in the lines it computes itself (the
+test counts, the JSON or table head, a repeat or trace count), which must equal what the
+original gives; every error line in it is a line of the original, and no error line or failing
+test of the original, nor any of a failing test's messages, is missing from it; and it is at
+most 28,000 bytes. The other lines it writes (a JSON value's keys and sample, the marks where
+lines were left out) are held by those checks alone. Otherwise `Summarize` reports false, and
+the output passes as it would without shaping.
 
 `run --shape` and the originals directory come with M9b (#70), and reading an original back
 with M9c (#71).

@@ -88,7 +88,7 @@ Newest first.
 
 - 2026-11-11: M9 split into the summarizer (M9a), `run --shape` with the caller's originals
   directory (M9b, #70) and reading an original back (M9c, #71), one issue, branch and PR each;
-  #70 and #71 are the gaps harness's design note for #435 names. M9a (PR #72, #1) moves
+  #70 and #71 are the gaps harness's design note for harness#435 names. M9a (PR #72, #1) moves
   harness's summarizer byte for byte, so harness's copy for MCP results is held in step by a
   diff and the same tests rather than an import (harness calls the binary, 2026-11-07).
 
