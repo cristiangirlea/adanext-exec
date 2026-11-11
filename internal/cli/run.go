@@ -10,8 +10,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/cristiangirlea/adanext-exec/broker"
+	"github.com/cristiangirlea/adanext-exec/internal/originals"
 )
 
 // auditDir is where the audit goes unless --audit-dir says otherwise; tests replace it.
@@ -90,6 +92,14 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageFail(stderr, "--originals, --originals-root, --originals-max and --originals-all-max need --shape")
 	case *shape:
 		shaping = &broker.Shape{Dir: *originalsDir, Root: *originalsRoot, Over: *outputCap}
+		step := int64(*outputCap)
+		if step == 0 {
+			step = broker.DefaultShapeOver
+		}
+		// The first range is one a threshold long, which run passes through as it is anyway.
+		shaping.ReadHint = func(h string, size int64) string {
+			return fmt.Sprintf("adanext-exec original %s --range 0-%d reads it, at most %d bytes a read", h, min(size, step), originals.MaxRead)
+		}
 		if shaping.DirMax, err = parseSize(*originalsMax); err != nil {
 			return usageFail(stderr, "--originals-max: "+err.Error())
 		}
@@ -126,6 +136,22 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		c.Shell, c.Script = broker.Shell(*shell), rest[0]
 	default:
 		c.Args = rest
+	}
+	if read := originalRead(c); shaping != nil && read != nil {
+		// Exactly a read of an original, which the line above told the agent to run: this
+		// binary's own read runs instead of whatever the name finds, neither shaped nor cut.
+		exe, err := selfExecutable()
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: find this binary to read the original: %v\n", err)
+			return ExitCannotRun
+		}
+		dir, err := filepath.Abs(*originalsDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: %v\n", err)
+			return ExitCannotRun
+		}
+		c.Args = append(append([]string{exe, "original"}, read...), "--originals", dir)
+		c.Shell, c.Script, c.Shape = "", "", nil
 	}
 	// A policy that cannot be used still goes to Run, which refuses the command with its
 	// reason and writes the audit line.

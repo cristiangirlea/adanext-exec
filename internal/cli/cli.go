@@ -47,6 +47,7 @@ const usage = `usage:
   adanext-exec run [flags] -- <program> [args...]
   adanext-exec run [flags] --shell <name> -- <script>
   adanext-exec run [flags] --shell <name> --script-b64 <script as URL-safe base64>
+  adanext-exec original <handle> [--range a-b] --originals DIR
   adanext-exec check --json [--policy FILE | --profile NAME] < request.json
   adanext-exec serve [--slots N] [--socket PATH]
   adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
@@ -78,6 +79,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return ExitCannotRun
 		}
 		return serve(ctx, args[1:], stderr)
+	case "original":
+		// A read of a file the user's own runs wrote: nothing runs, so elevation changes nothing.
+		return original(args[1:], stdout, stderr)
 	case "check":
 		// check answers the refusal in its own JSON, as it answers everything else.
 		return check(args[1:], stdin, stdout, stderr)

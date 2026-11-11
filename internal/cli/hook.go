@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,11 +99,55 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags.SetOutput(io.Discard)
 	policy := flags.String("policy", "", "the policy file (default: the user's adanext-exec/policy.json, else the built-in rules)")
 	profile := flags.String("profile", "", "the policy in the user's adanext-exec/profiles/<name>.json")
+	shape := flags.Bool("shape", false, "rewrite each command, but one in the background, to run --shape")
+	originalsDir := flags.String("originals", "", "with --shape: the directory that keeps the originals")
+	originalsRoot := flags.String("originals-root", "", "with --shape: run's --originals-root")
+	originalsMax := flags.String("originals-max", "", "with --shape: run's --originals-max")
+	originalsAllMax := flags.String("originals-all-max", "", "with --shape: run's --originals-all-max")
+	outputCap := flags.Int("output-cap", 0, "with --shape: run's --output-cap, the size past which an output is shaped")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		if err == nil {
 			err = errors.New("arguments after the flags")
 		}
 		return deny("the hook's arguments: " + err.Error())
+	}
+	var shaping []string
+	switch {
+	case *shape && *originalsDir == "":
+		return deny("the hook's arguments: --shape needs --originals")
+	case !*shape && (*originalsDir != "" || *originalsRoot != "" || *originalsMax != "" || *originalsAllMax != "" || *outputCap != 0):
+		return deny("the hook's arguments: --originals, --originals-root, --originals-max, --originals-all-max and --output-cap need --shape")
+	case *shape:
+		// The command may run in another directory than the hook.
+		dir, err := filepath.Abs(*originalsDir)
+		if err != nil {
+			return deny("the originals' path: " + err.Error())
+		}
+		shaping = []string{"--shape", "--originals", dir}
+		if *originalsRoot != "" {
+			root, err := filepath.Abs(*originalsRoot)
+			if err != nil {
+				return deny("the originals root's path: " + err.Error())
+			}
+			shaping = append(shaping, "--originals-root", root)
+		}
+		for name, size := range map[string]string{"--originals-max": *originalsMax, "--originals-all-max": *originalsAllMax} {
+			if _, err := parseSize(size); err != nil {
+				return deny("the hook's arguments: " + name + ": " + err.Error())
+			}
+		}
+		if *originalsMax != "" {
+			shaping = append(shaping, "--originals-max", *originalsMax)
+		}
+		if *originalsAllMax != "" {
+			shaping = append(shaping, "--originals-all-max", *originalsAllMax)
+		}
+		switch {
+		case *outputCap < 0:
+			return deny("the hook's arguments: a negative --output-cap")
+		case *outputCap > 0:
+			shaping = append(shaping, "--output-cap", strconv.Itoa(*outputCap))
+		}
 	}
 	if isElevated() {
 		return deny(errElevated)
@@ -208,6 +253,11 @@ func hook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if timeout > 0 {
 		argv = append(argv, "--timeout", timeout.String())
+	}
+	var background bool
+	// A call in the background is read as it comes, which shaping would hold back.
+	if json.Unmarshal(input["run_in_background"], &background) != nil || !background {
+		argv = append(argv, shaping...)
 	}
 	argv = append(argv, "--agent", "claude-code")
 	if in.Session != "" {
