@@ -10,8 +10,11 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 
 	"github.com/cristiangirlea/adanext-exec/broker"
+	"github.com/cristiangirlea/adanext-exec/internal/originals"
 )
 
 // auditDir is where the audit goes unless --audit-dir says otherwise; tests replace it.
@@ -83,6 +86,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageFail(stderr, "--memory: "+err.Error())
 	}
 	var shaping *broker.Shape
+	var readBound int64
 	switch {
 	case *shape && *originalsDir == "":
 		return usageFail(stderr, "--shape needs --originals")
@@ -90,6 +94,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return usageFail(stderr, "--originals, --originals-root, --originals-max and --originals-all-max need --shape")
 	case *shape:
 		shaping = &broker.Shape{Dir: *originalsDir, Root: *originalsRoot, Over: *outputCap}
+		step := int64(*outputCap)
+		if step == 0 {
+			step = broker.DefaultShapeOver
+		}
+		// A read through run --shape is at most a threshold long, the size the caller takes an
+		// agent to see whole, and never past the read's own bound.
+		readBound = min(step, originals.MaxRead)
+		shaping.ReadHint = func(h string, size int64) string {
+			return fmt.Sprintf("adanext-exec original %s --range 0-%d reads it, at most %d bytes a read", h, min(size, readBound), readBound)
+		}
 		if shaping.DirMax, err = parseSize(*originalsMax); err != nil {
 			return usageFail(stderr, "--originals-max: "+err.Error())
 		}
@@ -148,6 +162,23 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return v.Rule == rule, nil
 		}
 	}
+	if read := originalRead(c); shaping != nil && read != nil && readAllowed(p, c, approvedSet, *approved) {
+		// Exactly a read of an original, which the line above told the agent to run, and one
+		// the policy lets run as written: this binary's own read runs instead of whatever the
+		// name finds, bounded by the threshold, neither shaped nor cut.
+		exe, err := selfExecutable()
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: find this binary to read the original: %v\n", err)
+			return ExitCannotRun
+		}
+		dir, err := filepath.Abs(*originalsDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: %v\n", err)
+			return ExitCannotRun
+		}
+		c.Args = append(append([]string{exe, "original"}, read...), "--originals", dir, "--max", strconv.FormatInt(readBound, 10))
+		c.Shell, c.Script, c.Shape = "", "", nil
+	}
 	dir := *audit
 	if dir == "" {
 		if dir, err = auditDir(); err != nil {
@@ -199,6 +230,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, "adanext-exec: the memory ceiling is not enforced on this platform; the command ran without it")
 	}
 	return ranCode(res, err)
+}
+
+// readAllowed reports whether the policy runs the agent's own text of a read: allowed, or asked
+// about under the rule --approved names. Anything else is left as written, for Run to refuse.
+func readAllowed(p *broker.Policy, c broker.Command, approvedSet bool, approved string) bool {
+	v, err := p.Check(c)
+	return err == nil && (v.Decision == broker.Allow || v.Decision == broker.Ask && approvedSet && v.Rule == approved)
 }
 
 // ranCode is the exit code of a command that ran, given its result and Run's error: a lost slot,

@@ -41,6 +41,9 @@ type Shape struct {
 	// DirMax caps the bytes in Dir, AllMax the bytes in Dir and under Root together; zero is
 	// 64 MiB and 1 GiB.
 	DirMax, AllMax int64
+	// ReadHint, when set, is added to the original's line after "; ", given the handle and the
+	// original's size, to say how to read it back.
+	ReadHint func(handle string, size int64) string
 }
 
 // open checks the Shape and opens its originals, before the command runs.
@@ -75,7 +78,7 @@ func runShaped(ctx context.Context, c Command, store *originals.Store, over int)
 	if !ran {
 		return res, ran, err
 	}
-	out, serr := h.shaped(store, over, &res)
+	out, serr := h.shaped(store, over, c.Shape.ReadHint, &res)
 	if c.Stdout != nil && out != "" {
 		if _, werr := c.Stdout.Write([]byte(out)); werr != nil {
 			serr = errors.Join(serr, fmt.Errorf("write the command's output: %w", werr))
@@ -110,7 +113,7 @@ func (h *held) Write(p []byte) (int, error) {
 
 // shaped is what the caller gets: the output as it is, a summary or a cut, with the original's
 // line when one was kept. It records what it did in res.
-func (h *held) shaped(store *originals.Store, over int, res *Result) (string, error) {
+func (h *held) shaped(store *originals.Store, over int, hint func(string, int64) string, res *Result) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.total <= int64(over) {
@@ -145,7 +148,11 @@ func (h *held) shaped(store *originals.Store, over int, res *Result) (string, er
 	if !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
-	return body + fmt.Sprintf("original: %s (%d bytes)\n", handle, h.total), nil
+	line := fmt.Sprintf("original: %s (%d bytes)", handle, h.total)
+	if hint != nil {
+		line += "; " + hint(handle, h.total)
+	}
+	return body + line + "\n", nil
 }
 
 // cutHead is the head's share of a cut: two thirds, as OutputCap keeps.

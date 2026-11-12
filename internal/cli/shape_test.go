@@ -25,7 +25,8 @@ func TestRunShapeKeepsTheOriginalInTheCallersDirectory(t *testing.T) {
 	}
 	text := strings.Repeat("x", 40000)
 	h := handleOf(text)
-	want := text[:20000] + "\n[... 10000 bytes cut ...]\n" + text[30000:] + "\n" + fmt.Sprintf("original: %s (40000 bytes)\n", h)
+	want := text[:20000] + "\n[... 10000 bytes cut ...]\n" + text[30000:] + "\n" +
+		fmt.Sprintf("original: %s (40000 bytes); adanext-exec original %s --range 0-30000 reads it, at most 30000 bytes a read\n", h, h)
 	if stdout != want {
 		t.Fatalf("stdout of %d bytes, want the cut and the original's line", len(stdout))
 	}
@@ -46,7 +47,8 @@ func TestRunShapeTakesItsThresholdFromTheOutputCap(t *testing.T) {
 		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
 	text := strings.Repeat("x", 150)
-	if want := text + "\n" + fmt.Sprintf("original: %s (150 bytes)\n", handleOf(text)); stdout != want {
+	h := handleOf(text)
+	if want := text + "\n" + fmt.Sprintf("original: %s (150 bytes); adanext-exec original %s --range 0-100 reads it, at most 100 bytes a read\n", h, h); stdout != want {
 		t.Fatalf("stdout %q, want %q", stdout, want)
 	}
 }
