@@ -295,6 +295,31 @@ Across commands (daemon):
   Code tool call, bounds its wait with `--max-wait` (`Slots.MaxWait`) below that limit, so a
   queued command ends with a clear answer (exit 124) instead of being cut off.
 
+## Shaping output (M9, #1)
+
+The gate sees a command's output before the agent does, whichever agent ran it. A large output
+(a test run, a log, a JSON dump) costs its whole size in the model's context on every later
+turn, so the gate can put a checked summary in its place and keep the original behind a handle.
+
+**The summarizer (M9a, `internal/shape`)** is harness's, moved with its adversarial, structured
+and fuzz tests and kept byte for byte, so the copy harness keeps for MCP results is held in step
+by a diff and the same tests. It classifies the text (Go test output, a log, a JSON value, a
+table, other terminal output) and summarizes each kind: test counts with every failing test and
+its messages; a log's warnings and errors with their context, repeated lines collapsed with a
+count and long traces shortened; a JSON value's shape (its item or key count, the keys and one
+sample); a table's size with its first and last rows and every row with an error; head and tail
+for the rest. A summary replaces the output only when it keeps the invariants: every number,
+negation and path in it occurs in the original, except in the lines it computes itself (the
+test counts, the JSON or table head, a repeat or trace count), which must equal what the
+original gives; every error line in it is a line of the original, and no error line or failing
+test of the original, nor any of a failing test's messages, is missing from it; and it is at
+most 28,000 bytes. The other lines it writes (a JSON value's keys and sample, the marks where
+lines were left out) are held by those checks alone. Otherwise `Summarize` reports false, and
+the output passes as it would without shaping.
+
+`run --shape` and the originals directory come with M9b (#70), and reading an original back
+with M9c (#71).
+
 ## How it controls processes, per platform
 
 | Concern | Windows | Linux | macOS |
@@ -496,6 +521,7 @@ or a sandbox, outside this project's first scope.
 | M6 | Claude Code integration (hook, docs) | The owner's sessions run through it |
 | M7 | hrn integration | harness's tools run through `adanext-exec run` |
 | M8 | AdaNext OS integration | `adad` runs tasks through `adanext-exec run` |
+| M9 | Output shaping: a checked summary in place of a large output, the original behind a handle | A summary that would lose a fact is refused, by adversarial tests; an original reads back whole |
 
 ## Not in scope (for now)
 

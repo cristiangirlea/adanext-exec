@@ -71,10 +71,26 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 - [ ] **M8: AdaNext OS.** `adad` runs each task command through the `adanext-exec run` binary
   (`--slots` for the daemon's slots), each in a cgroup of its own where adad holds a delegated
   one; a small client module for that (`client/`, its own `go.mod`) comes when M8 starts.
+- [ ] **M9: output shaping** (#1). A large output replaced by a checked summary at the gate,
+  the original kept behind a handle; what harness#435's slice 6 needs. Done when M9a to M9c are.
+  - [x] **M9a: the summarizer** (#1). harness's `internal/shape` at its commit `3b9d466`, with
+    its adversarial, structured and fuzz tests, unchanged. Done: PR #72, 2026-11-11.
+  - [ ] **M9b: `run --shape` and the originals** (#70). The caller names the originals
+    directory and its caps (64 MiB a directory, 1 GiB in all), refused rather than evicted; the
+    audit says a shaping happened and gives the handle.
+  - [ ] **M9c: reading an original** (#71). `adanext-exec original <handle> [--range a-b]`,
+    bounded, which `run --shape` passes through neither shaped again nor cut; the hook carries
+    `--shape`; a measurement on real outputs.
 
 ## Decisions log
 
 Newest first.
+
+- 2026-11-11: M9 split into the summarizer (M9a), `run --shape` with the caller's originals
+  directory (M9b, #70) and reading an original back (M9c, #71), one issue, branch and PR each;
+  #70 and #71 are the gaps harness's design note for harness#435 names. M9a (PR #72, #1) moves
+  harness's summarizer byte for byte, so harness's copy for MCP results is held in step by a
+  diff and the same tests rather than an import (harness calls the binary, 2026-11-07).
 
 - 2026-11-09: The hook carries a call's `timeout` into the rewrite as `--timeout`, so the gate
   ends the command's tree where Claude Code's tool would only move it to the background; a
