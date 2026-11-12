@@ -9,10 +9,17 @@ import (
 	"syscall"
 )
 
+// flock is syscall.Flock; tests stand in for it.
+var flock = syscall.Flock
+
 // tryLock takes an exclusive lock on f without waiting; busy says another holds it. The lock
 // goes with the file, or the process, however it ends.
 func tryLock(f *os.File) (busy bool, err error) {
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	// A signal may interrupt the call on some systems; that is not an answer, so ask again.
+	for err = syscall.EINTR; errors.Is(err, syscall.EINTR); {
+		err = flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	}
+	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return true, nil
 		}

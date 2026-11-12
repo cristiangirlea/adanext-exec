@@ -287,13 +287,19 @@ func TestWritersUnderOneRootKeepWithinTheCapOverAll(t *testing.T) {
 // one must have been refused as full.
 func runWriters(t *testing.T, cmds []*exec.Cmd) int {
 	t.Helper()
-	for _, cmd := range cmds {
+	stderr := make([]strings.Builder, len(cmds))
+	for i, cmd := range cmds {
+		cmd.Stderr = &stderr[i]
 		if err := cmd.Start(); err != nil {
+			for _, started := range cmds[:i] {
+				started.Process.Kill()
+				started.Wait()
+			}
 			t.Fatal(err)
 		}
 	}
 	kept, full := 0, 0
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		err := cmd.Wait()
 		var exit *exec.ExitError
 		switch {
@@ -302,7 +308,7 @@ func runWriters(t *testing.T, cmds []*exec.Cmd) int {
 		case errors.As(err, &exit) && exit.ExitCode() == 3:
 			full++
 		default:
-			t.Errorf("a writer failed: %v", err)
+			t.Errorf("a writer failed: %v: %s", err, strings.TrimSpace(stderr[i].String()))
 		}
 	}
 	if kept+full != len(cmds) {
