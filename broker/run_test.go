@@ -122,6 +122,22 @@ func TestHelperProcess(t *testing.T) {
 			time.Sleep(d)
 		}
 		os.Exit(0)
+	case "print":
+		// Writes the files ADANEXT_TEST_PRINT names, in order, each "out:" one to stdout and
+		// each "err:" one to stderr, one part a line.
+		for _, part := range strings.Split(os.Getenv("ADANEXT_TEST_PRINT"), "\n") {
+			stream, path, _ := strings.Cut(part, ":")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				os.Exit(2)
+			}
+			if stream == "err" {
+				_, _ = os.Stderr.Write(data)
+			} else {
+				_, _ = os.Stdout.Write(data)
+			}
+		}
+		os.Exit(0)
 	case "touch":
 		if err := os.WriteFile(os.Getenv("ADANEXT_TEST_MARKER"), nil, 0o600); err != nil {
 			os.Exit(2)

@@ -82,6 +82,13 @@ PowerShell 5.1.
    when it is not the build that wrote the rewrite, for example after an upgrade between the
    two. A build is a hash of the binary's own file, so any change to the binary counts.
    Reinstall so that the hook and the binary are one build.
+5. **Shaping, when you ask for it.** `adanext-exec hook claude-code --shape --originals DIR`
+   makes every rewrite but a background one shape its output: an output past 30,000 bytes (or
+   `--output-cap`) is kept in DIR and replaced by a checked summary, whose last line names
+   `adanext-exec original <handle> --range a-b`. That command, as written there, reads the
+   original back whole, a range at a time, without being shaped again. A session's originals
+   stay in DIR within its caps (`--originals-max`, `--originals-all-max`); nothing removes them.
+   [protocol.md](protocol.md) has the flags.
 
 ## What the hook cannot see
 

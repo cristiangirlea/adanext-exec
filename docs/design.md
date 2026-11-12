@@ -317,8 +317,58 @@ most 28,000 bytes. The other lines it writes (a JSON value's keys and sample, th
 lines were left out) are held by those checks alone. Otherwise `Summarize` reports false, and
 the output passes as it would without shaping.
 
-`run --shape` and the originals directory come with M9b (#70), and reading an original back
-with M9c (#71).
+**Shaping a command's output (M9b, #70)** is `Command.Shape`, which `run --shape` sets. Both
+streams are held as one output, in the order written, and written to Stdout once the command
+has ended, so a command whose output must be seen live is run without it. An output of at most
+`Shape.Over` bytes (30,000, harness's bound, unless the caller says otherwise) passes as it is.
+A longer one is kept whole and replaced by its summary, or by its head and tail (two thirds and
+one third of `Over`, around a count of what was left out) when no summary keeps the
+invariants; a last line, `original: <handle> (<n> bytes)`, names the original. The audit line
+says a shaping happened and gives the handle and size, never the content.
+
+**The originals** live where the caller says, not in a directory of the gate's own, so an hrn
+run keeps every original in its record (`<run>/originals`) whichever agent ran the command, and
+hrn's own reader and its copying of originals into a continued run work on them unchanged. An
+original is `<dir>/<handle>.txt`, the handle being the first 16 hex characters of the SHA-256
+of its bytes, as harness names its own. The originals hold whatever the commands printed, secrets
+included, so on Linux and macOS the directory is owner-only (made so, or tightened when it
+exists); on Windows it takes its parent's access list, as the audit's does. It must be a plain
+directory, not a link, and the directory written is the one its path named when it was checked:
+everything happens through a handle to it, so a link put in its place is never followed. One
+that cannot be used leaves the command not run. Two caps bound the store, as
+harness's do: 64 MiB in the directory, and 1 GiB over it and every run's `originals` under a
+root the caller may name (`Shape.Root`, the directory holding one directory per run), a file
+linked into several runs counted once. A new original that would pass either is refused, never
+an old one evicted, since a handle already in a model's context must not dangle; the output is
+then cut as without shaping, and the result and the audit say why. An output past the smaller
+cap, or past 256 MiB (`MaxShapeHold`) whatever the caps, is not held whole, and its original is
+not kept: the binary holds at most that, a copy of it for the summarizer and a tail of up to two
+thirds of `Over`, outside the command's memory ceiling. Several `run` processes keep within the caps together: measuring and
+writing happen under exclusive locks on `.adanext-exec-originals.lock` in the root, when there
+is one, and then in the directory, each made through a handle to its directory, so writers of
+one directory wait for each other whatever root they name. Each original is written to a
+temporary file and renamed into place. A writer that does not take the locks (hrn's own, for
+MCP results) is not held by them. Summarizing happens after the command has ended, outside its
+timeout, and takes about a second for every 6 MiB.
+
+**Reading an original back (M9c, #71)** is `adanext-exec original <handle> [--range a-b]
+--originals DIR`: the whole original or bytes a to b, at most 1 MiB a read (`--max` sets less),
+only from a regular file directly in the directory, through the same checked handle as the
+writes. The original's line names the command with a first range of one threshold. An agent
+whose shell goes through the gate runs that command through `run --shape` too, where its output
+would be shaped again or cut, so the original could never be read whole: `run --shape` takes
+exactly that command (the bare program name, `original`, a handle, at most one range, nothing
+else) for this binary's own read, which it runs in place of whatever the name would find,
+unshaped and uncut, and bounded by the threshold: the caller sets the threshold to what its agent
+sees whole (Claude Code's Bash tool shows about 30,000 characters by default), so a read the line
+suggests is never cut by the agent's own tool. The exception cannot be borrowed by another
+program, nor by more text around the read. The policy judges the read as the agent wrote it
+before the swap, so a rule that refuses or asks about that text holds as for any command; the
+swapped read is then judged again as it runs. The Claude Code hook carries `--shape` and the
+originals flags into every rewrite but a background call's, whose output is read as it comes.
+
+A measurement on real outputs, bytes in and out per kind, is in
+[shaping-measurement.md](shaping-measurement.md).
 
 ## How it controls processes, per platform
 

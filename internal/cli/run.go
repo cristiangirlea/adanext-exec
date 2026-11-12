@@ -10,8 +10,11 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 
 	"github.com/cristiangirlea/adanext-exec/broker"
+	"github.com/cristiangirlea/adanext-exec/internal/originals"
 )
 
 // auditDir is where the audit goes unless --audit-dir says otherwise; tests replace it.
@@ -39,6 +42,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	hookBuild := flags.String("hook-build", "", "the build of the hook that wrote this command line; run refuses another build's")
 	memory := flags.String("memory", "", "a ceiling on the memory of the command and all it starts: bytes, or with K, M or G")
 	memoryCeiling := flags.String("memory-ceiling", "", "how --memory is held on Linux: auto, cgroup (by the kernel, or the command is not run) or watchdog (default: the policy's, else auto)")
+	shape := flags.Bool("shape", false, "hold both streams as one output until the command ends, and put a checked summary in place of one past --output-cap bytes (default 30000), keeping the original in --originals")
+	originalsDir := flags.String("originals", "", "with --shape: the directory that keeps the originals, made when its parent exists")
+	originalsRoot := flags.String("originals-root", "", "with --shape: a directory of runs whose originals directories count together with --originals")
+	originalsMax := flags.String("originals-max", "", "with --shape: the cap on --originals, in bytes or with K, M or G (default 64M)")
+	originalsAllMax := flags.String("originals-all-max", "", "with --shape: the cap on --originals and the root's originals together (default 1G)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -77,10 +85,39 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return usageFail(stderr, "--memory: "+err.Error())
 	}
+	var shaping *broker.Shape
+	var readBound int64
+	switch {
+	case *shape && *originalsDir == "":
+		return usageFail(stderr, "--shape needs --originals")
+	case !*shape && (*originalsDir != "" || *originalsRoot != "" || *originalsMax != "" || *originalsAllMax != ""):
+		return usageFail(stderr, "--originals, --originals-root, --originals-max and --originals-all-max need --shape")
+	case *shape:
+		shaping = &broker.Shape{Dir: *originalsDir, Root: *originalsRoot, Over: *outputCap}
+		step := int64(*outputCap)
+		if step == 0 {
+			step = broker.DefaultShapeOver
+		}
+		// A read through run --shape is at most a threshold long, the size the caller takes an
+		// agent to see whole, and never past the read's own bound.
+		readBound = min(step, originals.MaxRead)
+		shaping.ReadHint = func(h string, size int64) string {
+			return fmt.Sprintf("adanext-exec original %s --range 0-%d reads it, at most %d bytes a read", h, min(size, readBound), readBound)
+		}
+		if shaping.DirMax, err = parseSize(*originalsMax); err != nil {
+			return usageFail(stderr, "--originals-max: "+err.Error())
+		}
+		if shaping.AllMax, err = parseSize(*originalsAllMax); err != nil {
+			return usageFail(stderr, "--originals-all-max: "+err.Error())
+		}
+		// Under --shape the output cap is the threshold, and the size of a cut.
+		*outputCap = 0
+	}
 	c := broker.Command{
 		Stdin: stdin, Stdout: stdout, Stderr: stderr,
 		Timeout: *timeout, OutputCap: *outputCap, MemoryLimit: memoryLimit, MemoryCeiling: ceiling,
 		Caller: broker.Caller{Agent: *agent, Session: *session, RunID: *runID},
+		Shape:  shaping,
 	}
 	switch {
 	case *scriptB64 != "":
@@ -124,6 +161,23 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		c.Ask = func(_ context.Context, _ broker.Command, v broker.Verdict) (bool, error) {
 			return v.Rule == rule, nil
 		}
+	}
+	if read := originalRead(c); shaping != nil && read != nil && readAllowed(p, c, approvedSet, *approved) {
+		// Exactly a read of an original, which the line above told the agent to run, and one
+		// the policy lets run as written: this binary's own read runs instead of whatever the
+		// name finds, bounded by the threshold, neither shaped nor cut.
+		exe, err := selfExecutable()
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: find this binary to read the original: %v\n", err)
+			return ExitCannotRun
+		}
+		dir, err := filepath.Abs(*originalsDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "adanext-exec: %v\n", err)
+			return ExitCannotRun
+		}
+		c.Args = append(append([]string{exe, "original"}, read...), "--originals", dir, "--max", strconv.FormatInt(readBound, 10))
+		c.Shell, c.Script, c.Shape = "", "", nil
 	}
 	dir := *audit
 	if dir == "" {
@@ -169,10 +223,20 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return ExitCannotRun
 	}
+	if res.OriginalRefused != "" {
+		fmt.Fprintf(stderr, "adanext-exec: the original was not kept (%s); the output was cut\n", res.OriginalRefused)
+	}
 	if memoryLimit > 0 && !res.MemoryEnforced {
 		fmt.Fprintln(stderr, "adanext-exec: the memory ceiling is not enforced on this platform; the command ran without it")
 	}
 	return ranCode(res, err)
+}
+
+// readAllowed reports whether the policy runs the agent's own text of a read: allowed, or asked
+// about under the rule --approved names. Anything else is left as written, for Run to refuse.
+func readAllowed(p *broker.Policy, c broker.Command, approvedSet bool, approved string) bool {
+	v, err := p.Check(c)
+	return err == nil && (v.Decision == broker.Allow || v.Decision == broker.Ask && approvedSet && v.Rule == approved)
 }
 
 // ranCode is the exit code of a command that ran, given its result and Run's error: a lost slot,

@@ -26,7 +26,12 @@ exits.
 | `--approved RULE` | A person approved an ask under RULE. It counts only when the policy's own answer for the command is ask under that same rule. An empty RULE (`--approved=`) is an ask by the policy's default, which names no rule. |
 | `--audit-dir DIR` | The audit directory, instead of the user's state directory. |
 | `--timeout D` | Kill the command's tree after D (Go's duration syntax: `90s`, `5m`). |
-| `--output-cap N` | Bound each output stream to N bytes. |
+| `--output-cap N` | Bound each output stream to N bytes; with `--shape`, the size past which the one output is shaped. |
+| `--shape` | Hold standard output and standard error as one output, in the order written, until the command ends, then write it to standard output: as it is when it is at most `--output-cap` bytes (default 30000), otherwise with a checked summary or its head and tail in its place and the original kept (below). Needs `--originals`. |
+| `--originals DIR` | With `--shape`: the directory that keeps the originals. It is made when its parent exists, owner-only on Linux and macOS (an existing one is tightened); on Windows it takes its parent's access list. A link or anything but a directory there is refused (not run, 126). |
+| `--originals-root DIR` | With `--shape`: a directory with one directory per run, each with its originals in a directory named `originals`: those count together with `--originals` against `--originals-all-max`. |
+| `--originals-max SIZE` | With `--shape`: the cap on `--originals` (default `64M`). |
+| `--originals-all-max SIZE` | With `--shape`: the cap on `--originals` and the root's originals together (default `1G`). |
 | `--slots` | Wait for one of the daemon's heavy-command slots before the command starts, and hold it until the command ends. The wait is shown on standard error with its place in the queue. |
 | `--socket PATH` | The daemon's socket, instead of `<state dir>/adanext-exec/daemon/daemon.sock`; implies `--slots`. |
 | `--max-wait D` | With `--slots`: give up after waiting D for a slot. The wait counts toward no `--timeout`, which starts with the command. |
@@ -44,6 +49,36 @@ says why.
 **The audit is always written**, one line per command, also for one that did not run. A command
 whose line cannot be opened does not run.
 
+**Shaping (`--shape`).** An output past the threshold is kept whole as
+`<originals>/<handle>.txt`, the handle being the first 16 hex characters of the SHA-256 of its
+bytes (the same bytes give the same handle, and are kept once). What is written in its place is
+a summary that keeps every fact the checks of [design.md](design.md) hold it to, or, when no
+summary does, its first two thirds of the threshold and its last third around a line
+`[... N bytes cut ...]`; then a last line
+
+```
+original: <handle> (<n> bytes); adanext-exec original <handle> --range 0-<k> reads it, at most <m> bytes a read
+```
+
+where `<m>` is the threshold, or 1048576 (one read's own bound) when that is smaller, and `<k>`
+is `<m>`, or `<n>` when that is smaller. The command it names, given exactly so (the bare name
+`adanext-exec` or `adanext-exec.exe`, `original`, the handle, and at most one `--range a-b` or
+`--range=a-b`, as shell text with nothing else, or as argv), is judged by the policy as written
+first. When the policy allows it, or asks under the rule `--approved` names, it is not run as
+written: `run --shape` runs this binary's own `original` for it, with `--originals` and `--max
+<m>`, and passes its output on as it is, neither shaped nor cut. So a read is at most a threshold
+long, the size the caller takes its agent to see whole, and a longer one is refused (121); an
+agent whose shell goes through the gate reads an original whole, a threshold at a time. A read
+the policy refuses or asks about is left as written, for `run` to refuse as any command.
+Anything else, a path to the program or another word included, is run and shaped as usual.
+
+An original that would pass a cap, or an output past 256 MiB, is not kept, never an old one
+removed: the output is cut, with no such line, and standard error says why. Nothing is written while the command runs, so a
+command whose output must be seen as it comes (a server, a watch) is run without `--shape`.
+Summarizing a very large output takes time after the command ends, about a second for every 6
+MiB. The audit line says what was done (`shaped`, `original`, `original_bytes`,
+`original_refused`), never the output.
+
 **The binary refuses to run as root or as an elevated administrator** (exit 126). A token whose
 elevation cannot be read counts as elevated.
 
@@ -55,18 +90,38 @@ codes cannot be told from the binary's; a caller that must tell reads the audit 
 
 | Code | Meaning |
 |---|---|
-| 120 | The command ran, but something after it failed: writing its output, writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
-| 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`. |
+| 120 | The command ran, but something after it failed: writing its output, keeping its original (other than a full cap), writing its audit line, or killing what it left running. Its own code is in the audit line, when that was written. |
+| 121 | The arguments are not valid (usage), including a negative `--timeout` or `--output-cap`, `--shape` without `--originals`, or an `--originals` flag without `--shape`. |
 | 122 | The command and what it started went over `--memory` together, and the tree was stopped. |
 | 123 | The command asked for a slot (`--slots`, `--socket`) and no daemon answered, or the socket is not the user's (not run); or the daemon went away while the command held its slot, and the command was killed with its tree. |
 | 124 | The command ran past `--timeout`, and its tree was killed; or, not run, it waited past `--max-wait` for a slot, or the daemon refused it one. |
 | 125 | Not run: the policy refused it, answered ask with no matching `--approved`, or could not be used. |
-| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, `--hook-build` names another build, or `--memory-ceiling cgroup` (or the policy's) asked for a hard ceiling that cannot be held here. |
+| 126 | Not run: it could not start, be contained or be audited, the shell is unknown, the binary runs elevated, `--hook-build` names another build, `--memory-ceiling cgroup` (or the policy's) asked for a hard ceiling that cannot be held here, or `--originals` cannot be used. |
 | 127 | Not run: the program (in PATH, or at the path given) or the shell was not found. |
 | 128+n | The command was ended by signal n (Linux and macOS), as shells report it. |
 | 130 | The binary was interrupted; the command's tree was killed (or it never started). |
 
 The binary's own messages go to standard error.
+
+## `adanext-exec original`
+
+```
+adanext-exec original <handle> [--range a-b] [--max N] --originals DIR
+```
+
+Prints the original `run --shape` kept as `<DIR>/<handle>.txt`, or bytes a to b of it,
+zero-based and end exclusive; an end past the original reads to its end. One read is at most
+`--max` bytes, 1 MiB (1048576) at most and by default: a larger original, or range, is refused,
+and is read in ranges. The handle is 16 lowercase hex characters, and only a regular file
+directly in the directory is read, through a handle to the directory as its path named it, so no
+link is followed out of it. It refuses to run elevated, as `run` does.
+
+| Code | Meaning |
+|---|---|
+| 0 | The bytes are on standard output, as they are. |
+| 121 | Not a handle, not a range (`a-b`, a backward one, one that starts past the original, or one past the bound), a whole original past the bound, no handle, no `--originals`, or a `--max` outside 1 to 1048576. |
+| 126 | Nothing to read: no such original, not a regular file, or a directory that is not a plain one; or the binary runs elevated. |
+| 120 | Writing the bytes failed. |
 
 ## `adanext-exec check --json`
 
@@ -110,7 +165,9 @@ outcome but `-h` has its one answer line, a usage error included:
 ## `adanext-exec hook claude-code`
 
 ```
-adanext-exec hook claude-code [--policy FILE | --profile NAME] < PreToolUse.json
+adanext-exec hook claude-code [--policy FILE | --profile NAME]
+  [--shape --originals DIR [--originals-root DIR] [--originals-max SIZE] [--originals-all-max SIZE] [--output-cap N]]
+  < PreToolUse.json
 ```
 
 Claude Code's PreToolUse hook, the same on Windows, Linux and macOS. [claude-code.md](claude-code.md)
@@ -158,6 +215,11 @@ A call that sets `tool_input.timeout` (milliseconds) gets it as `--timeout`, so 
 command's tree at that time, which Claude Code's tool does not: it moves the command to the
 background. A call with `run_in_background` true gets no `--timeout`, since it is meant to outlive
 its call.
+
+With `--shape`, every rewrite carries `--shape` and the originals flags given to the hook (the
+paths made absolute), so `run` shapes the command's output as above; a call with
+`run_in_background` true does not, since its output is read as it comes. `--originals` and the
+other shaping flags without `--shape`, or `--shape` without `--originals`, deny.
 
 **It denies what it cannot judge**: input that is not valid JSON or is larger than 1 MiB,
 another event, no tool, a `tool_input` that is not an object or has no command string, a `timeout` that is not a positive number, a policy
