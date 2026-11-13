@@ -64,7 +64,7 @@ func TestRunHoldsTheCeilingInACgroup(t *testing.T) {
 	if rep.Err != "" || !res.MemoryEnforced || !res.MemoryHard || !res.MemoryExceeded || res.ExitCode != -1 {
 		t.Errorf("%+v, %q; want the kernel to stop the tree at its ceiling", res, rep.Err)
 	}
-	if res.PeakMemory > 128*mib {
+	if !heldAtCeiling(res.PeakMemory, 128*mib) {
 		t.Errorf("peak %d; the kernel holds the tree at 128 MiB", res.PeakMemory)
 	}
 	lines := readAudit(t, audit)

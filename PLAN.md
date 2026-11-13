@@ -86,6 +86,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-13: #69 (PR #75). `TestRunHoldsTheCeilingInACgroup` failed once on CI with a peak one
+  page over its 128 MiB ceiling: the kernel can force a few pages past `memory.max`. The test now
+  allows 256 KiB over the ceiling, which a tree the kernel does not hold (the helper asks for
+  512 MB) still passes far beyond.
 - 2026-11-11: M9c (PR #74, #71), which completes M9. `run --shape` recognises a read of an
   original only in its exact form, the bare program name included, and runs its own binary's
   read in its place, so a program elsewhere in PATH named `adanext-exec`, or text around the
