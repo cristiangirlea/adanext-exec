@@ -65,9 +65,13 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
   - [x] **M6b: the user's rules and the binary** (#57, #6, #7). The user's permission rules
     applied to the original text, the hook's version carried to `run`, and installing
     (`docs/claude-code.md`). Done: PR #59, 2026-11-07.
-- [ ] **M7: hrn.** harness's tools run shell commands through the `adanext-exec run` binary;
+- [x] **M7: hrn.** harness's tools run shell commands through the `adanext-exec run` binary;
   harness never imports this module (harness#435, its slices in harness; slice 1 is
-  harness#872).
+  harness#872). Done in harness: harness#872 (the api backend, 2026-11-07), harness#894 (claude
+  through the hook, 2026-11-09), harness#900 (the guard handed to the gate as a policy,
+  2026-11-09), harness#903 (codex through a gate-backed MCP tool, 2026-11-10), harness#905 (watch
+  shows the gate's record, 2026-11-10), harness#907 (batch gate commands, 2026-11-11) and
+  harness#913 (shaping claude's routed commands, 2026-11-12). harness#435 itself is still open.
 - [ ] **M8: AdaNext OS.** `adad` runs each task command through the `adanext-exec run` binary
   (`--slots` for the daemon's slots), each in a cgroup of its own where adad holds a delegated
   one; a small client module for that (`client/`, its own `go.mod`) comes when M8 starts.
@@ -86,6 +90,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-18: #76 (PR #77). The README said "being designed; nothing to install yet" with M0 to
+  M6 and M9 merged. It now names what is built and what is planned, and gives the install
+  command, run on an empty module cache first. M7 is ticked from harness's merged pull requests.
 - 2026-11-13: #69 (PR #75). `TestRunHoldsTheCeilingInACgroup` failed once on CI with a peak one
   page over its 128 MiB ceiling: the kernel can force a few pages past `memory.max`. The test now
   allows 256 KiB over the ceiling, which a tree the kernel does not hold (the helper asks for
