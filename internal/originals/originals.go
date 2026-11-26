@@ -243,10 +243,20 @@ func (s *Store) lock(dir *os.Root) (func(), error) {
 	return func() { f.Close(); unlock() }, nil
 }
 
+// openLock opens or creates the lock file in r; tests stand in for it.
+var openLock = func(r *os.Root) (*os.File, error) {
+	return r.OpenFile(lockName, os.O_RDWR|os.O_CREATE, 0o600)
+}
+
 // lockIn takes the lock file in r, waiting up to lockWait for another writer; closing the file
 // lets it go.
 func lockIn(r *os.Root, at string) (*os.File, error) {
-	f, err := r.OpenFile(lockName, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := openLock(r)
+	// macOS can report a create-open as missing while another process creates the same file.
+	for attempt := 1; errors.Is(err, fs.ErrNotExist) && attempt < 5; attempt++ {
+		time.Sleep(time.Duration(attempt) * 5 * time.Millisecond)
+		f, err = openLock(r)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open the originals' lock in %s: %w", at, err)
 	}
