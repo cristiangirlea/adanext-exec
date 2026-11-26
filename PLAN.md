@@ -90,6 +90,9 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-26: PR #80. The first release, v0.1.0, source only, tagged on this PR's merge once
+  `main` was green on all three platforms after #78 (PR #79); the README's install section names
+  it instead of "no tagged release yet".
 - 2026-11-26: #78 (PR #79). macOS can report a create-open of the originals' lock as missing
   while another process creates it, which failed `TestWritersInSeveralProcessesKeepWithinTheCap`
   on `main`. `lockIn` now retries the open up to five times with a short growing pause while it

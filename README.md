@@ -31,7 +31,7 @@ Sandboxing is out of scope for now.
 
 ## Install
 
-There is no tagged release yet. With Go 1.26.4 or later, the version `go.mod` names:
+The first release, v0.1.0, is source only. With Go 1.26.4 or later, the version `go.mod` names:
 
 ```bash
 go install github.com/cristiangirlea/adanext-exec/cmd/adanext-exec@latest
