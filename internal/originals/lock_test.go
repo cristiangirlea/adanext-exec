@@ -55,3 +55,24 @@ func TestALockThatStaysMissingFailsAfterAFewTries(t *testing.T) {
 		t.Fatalf("opened %d times, want 5", *calls)
 	}
 }
+
+func TestALockOpenThatFailsOtherwiseIsNotRetried(t *testing.T) {
+	r, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	calls := 0
+	old := openLock
+	openLock = func(*os.Root) (*os.File, error) {
+		calls++
+		return nil, &fs.PathError{Op: "openat", Path: lockName, Err: fs.ErrPermission}
+	}
+	t.Cleanup(func() { openLock = old })
+	if _, err := lockIn(r, "the test directory"); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("got %v, want the permission error", err)
+	}
+	if calls != 1 {
+		t.Fatalf("opened %d times, want 1", calls)
+	}
+}
