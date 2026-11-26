@@ -90,6 +90,10 @@ whole; each milestone below is one or more issues, each a branch and a pull requ
 
 Newest first.
 
+- 2026-11-26: #78 (PR #79). macOS can report a create-open of the originals' lock as missing
+  while another process creates it, which failed `TestWritersInSeveralProcessesKeepWithinTheCap`
+  on `main`. `lockIn` now retries the open up to five times with a short growing pause while it
+  reports `fs.ErrNotExist`; a lock that stays missing still fails.
 - 2026-11-18: #76 (PR #77). The README said "being designed; nothing to install yet" with M0 to
   M6 and M9 merged. It now names what is built and what is planned, and gives the install
   command, run on an empty module cache first. M7 is ticked from harness's merged pull requests.
